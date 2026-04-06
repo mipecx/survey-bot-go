@@ -11,6 +11,8 @@ import (
 	"github.com/mipecx/survey-bot-go/internal/repository/postgres"
 )
 
+// main initializes the environment, establishes a database connection,
+// and starts the application bot logic.
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)

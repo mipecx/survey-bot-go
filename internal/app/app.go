@@ -12,6 +12,8 @@ import (
 	"github.com/mipecx/survey-bot-go/internal/service"
 )
 
+// Run initializes application components, sets up administrative access,
+// and starts the main update loop to process incoming messages.
 func Run(botAPI *tgbotapi.BotAPI, repo repository.UserRepository, logger *slog.Logger) {
 	adminMap := make(map[int64]bool)
 	rawAdmins := os.Getenv("ADMIN_IDS")
@@ -39,9 +41,13 @@ func Run(botAPI *tgbotapi.BotAPI, repo repository.UserRepository, logger *slog.L
 
 	for update := range updates {
 		go h.HandleUpdate(update, logger)
-		logger.Info("Update received",
-			slog.Int64("user_id", update.Message.From.ID),
-			slog.String("text", update.Message.Text),
-		)
+		userID := int64(0)
+		if update.Message != nil {
+			userID = update.Message.From.ID
+		} else if update.CallbackQuery != nil {
+			userID = update.CallbackQuery.From.ID
+		}
+
+		logger.Info("Update received", slog.Int64("user_id", userID))
 	}
 }

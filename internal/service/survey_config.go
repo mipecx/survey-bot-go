@@ -7,12 +7,35 @@ type Question struct {
 	NextForm string
 }
 
+const (
+	BtnEvent      = "Мероприятия"
+	BtnPartner    = "Подбор партнера"
+	BtnGodPartner = "Подбор божественного партнера"
+	BtnGift       = "Подарок"
+	BtnConsult    = "Консультация с Натальей"
+)
+
+const WelcomeText = `Добро пожаловать в пространство Натальи Харисовой 🤍
+
+			Здесь вы можете:
+			◦ получить приглашение на закрытые мероприятия знакомств;
+			◦ пройти анкету для подбора партнёра;
+			◦ записаться на разбор и составление портрета божественного партнёра;
+			◦ получить подарочный гайд о зрелых отношениях;
+			◦ оставить заявку на личную консультацию.
+
+			Это пространство создано для людей, которым близки зрелые отношения, достойное окружение и красивый уровень общения.
+
+			Чтобы открыть доступ, пройдите короткое знакомство
+
+			`
+
 var AllForms = map[string][]Question{
 	"new_user":     NewUserForm,
 	"event":        EventForm,
 	"dating_short": DatingShortForm,
 	"dating_full":  DatingFullForm,
-	"protrait":     PortraitForm,
+	"portrait":     PortraitForm,
 	"consult":      ConsultForm,
 }
 
@@ -24,7 +47,7 @@ var NewUserForm = []Question{
 
 var EventForm = []Question{
 	{ID: "event_city", Text: "Ваш город?"},
-	{ID: "event_gender", Text: "Ваш пол?", Options: []string{"Мужчина", "Женщина"}},
+	{ID: "event_gender", Text: "Ваш пол?", Options: []string{"Женщина", "Мужчина"}},
 	{ID: "event_age", Text: "Ваш возраст?"},
 	{ID: "event_family_status", Text: "Ваш семейный статус?", Options: []string{"Не был(а) в браке", "В разводе", "Вдовец/Вдова", "В процессе расставания"}},
 	{ID: "event_is_repeat", Text: "Были ли вы раньше на наших мероприятиях?", Options: []string{"Да", "Нет"}},
