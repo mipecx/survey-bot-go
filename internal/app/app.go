@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"strconv"
@@ -14,13 +15,23 @@ import (
 
 // Run initializes application components, sets up administrative access,
 // and starts the main update loop to process incoming messages.
-func Run(botAPI *tgbotapi.BotAPI, repo repository.UserRepository, logger *slog.Logger) {
+func Run(ctx context.Context, botAPI *tgbotapi.BotAPI, repo repository.UserRepository, logger *slog.Logger) {
 	adminMap := make(map[int64]bool)
 	rawAdmins := os.Getenv("ADMIN_IDS")
+
 	for _, s := range strings.Split(rawAdmins, ",") {
-		id, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			logger.Error("Failed to parse Admin_ID", "value", s, "err", err)
+			continue
+		}
 		adminMap[id] = true
 	}
+
 	if len(adminMap) == 0 {
 		logger.Warn("No admin IDs provided in ADMIN_IDS environment variable")
 	}
@@ -39,15 +50,36 @@ func Run(botAPI *tgbotapi.BotAPI, repo repository.UserRepository, logger *slog.L
 	updates := botAPI.GetUpdatesChan(u)
 	logger.Info("Bot started, waiting for updates...")
 
-	for update := range updates {
-		go h.HandleUpdate(update, logger)
-		userID := int64(0)
-		if update.Message != nil {
-			userID = update.Message.From.ID
-		} else if update.CallbackQuery != nil {
-			userID = update.CallbackQuery.From.ID
-		}
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("Stopping update loop...")
+			return
+		case update, ok := <-updates:
+			if !ok {
+				logger.Error("Update channel closed unexpectedly")
+				return
+			}
 
-		logger.Info("Update received", slog.Int64("user_id", userID))
+			var (
+				userID   int64
+				username string
+			)
+			if update.Message != nil {
+				userID = update.Message.From.ID
+				username = update.Message.From.UserName
+			} else if update.CallbackQuery != nil {
+				userID = update.CallbackQuery.From.ID
+				username = update.CallbackQuery.From.UserName
+			}
+
+			if userID != 0 {
+				logger.Info("Update received",
+					slog.Int64("user_id", userID),
+					slog.String("username", username))
+			}
+
+			go h.HandleUpdate(update)
+		}
 	}
 }

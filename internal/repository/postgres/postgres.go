@@ -9,10 +9,21 @@ import (
 	"github.com/mipecx/survey-bot-go/internal/models"
 )
 
+// Storage wraps a pgxpool connection pool and implements userRepository.
 type Storage struct {
 	Pool *pgxpool.Pool
 }
 
+// Close gracefully closes the underlying connection pool.
+func (r *Storage) Close() error {
+	if r.Pool != nil {
+		r.Pool.Close()
+	}
+	return nil
+}
+
+// New creates a new PostgreSQL connection pool and verifies connectivity via ping.
+// Returns an error if the pool can not be created or database in unreachable.
 func New(ctx context.Context, connString string) (*Storage, error) {
 	pool, err := pgxpool.New(ctx, connString)
 	if err != nil {
@@ -28,10 +39,8 @@ func New(ctx context.Context, connString string) (*Storage, error) {
 	return &Storage{Pool: pool}, nil
 }
 
-func (s *Storage) Close() {
-	s.Pool.Close()
-}
-
+// GetOrCreateUser inserts a new user or updates the username on conflict,
+// returning the current user record.
 func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username string) (*models.User, error) {
 	var user models.User
 
@@ -60,6 +69,7 @@ func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username stri
 	return &user, nil
 }
 
+// GetStep returns the current survey step ID for the given user.
 func (s *Storage) GetStep(ctx context.Context, tgID int64) (string, error) {
 	var step string
 	query := `SELECT current_step FROM users WHERE tg_id = $1`
@@ -71,6 +81,7 @@ func (s *Storage) GetStep(ctx context.Context, tgID int64) (string, error) {
 	return step, nil
 }
 
+// UpdateStep sets the current survey step ID for the given user.
 func (s *Storage) UpdateStep(ctx context.Context, tgID int64, step string) error {
 	query := `UPDATE users SET current_step = $1 WHERE tg_id = $2`
 
@@ -83,6 +94,7 @@ func (s *Storage) UpdateStep(ctx context.Context, tgID int64, step string) error
 	return nil
 }
 
+// GetForm returns the current form name for the given user.
 func (s *Storage) GetForm(ctx context.Context, tgID int64) (string, error) {
 	var step string
 	query := `SELECT current_form FROM users WHERE tg_id = $1`
@@ -94,19 +106,21 @@ func (s *Storage) GetForm(ctx context.Context, tgID int64) (string, error) {
 	return step, nil
 }
 
-func (s *Storage) UpdateForm(ctx context.Context, tgID int64, step string) error {
+// UpdateForm sets the current form name for the given user.
+func (s *Storage) UpdateForm(ctx context.Context, tgID int64, form string) error {
 	query := `UPDATE users SET current_form = $1 WHERE tg_id = $2`
 
-	_, err := s.Pool.Exec(ctx, query, step, tgID)
+	_, err := s.Pool.Exec(ctx, query, form, tgID)
 
 	if err != nil {
-		return fmt.Errorf("failed to update step: %w", err)
+		return fmt.Errorf("failed to update form: %w", err)
 	}
 
 	return nil
 }
 
-func (s *Storage) ResetUserProgress(ctx context.Context, tgID int64, newForm string) error {
+// ResetUserProgress resets the user's form, step, and survey_data to their initial state.
+func (s *Storage) ResetUserProgress(ctx context.Context, tgID int64, form string) error {
 	query := `
 		UPDATE users
 		SET current_form = $1,
@@ -114,18 +128,24 @@ func (s *Storage) ResetUserProgress(ctx context.Context, tgID int64, newForm str
 		    survey_data = '{}'
 		WHERE tg_id = $2
 	`
-	_, err := s.Pool.Exec(ctx, query, newForm, tgID)
+	_, err := s.Pool.Exec(ctx, query, form, tgID)
 	if err != nil {
 		return fmt.Errorf("failed to reset progress: %w", err)
 	}
 	return nil
 }
 
+// SaveAnswer persist a single survey answer for the given user.
+// Structured fields (full_name, phone, birth_date) are saved to dedicated columns;
+// all other answers are merged into the survey_data JSONB column.
 func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value any) error {
 	var query string
 	var args []any
 
-	valStr, _ := value.(string)
+	valStr, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("expected string value for key %s, got %T", key, value)
+	}
 
 	switch key {
 	case "reg_name":
@@ -150,5 +170,8 @@ func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value 
 	}
 
 	_, err := s.Pool.Exec(ctx, query, args...)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to save answer (key=%s, tgID=%d): %w", key, tgID, err)
+	}
+	return nil
 }

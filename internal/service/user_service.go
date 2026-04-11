@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mipecx/survey-bot-go/internal/models"
 	"github.com/mipecx/survey-bot-go/internal/repository"
 )
 
+// UserService defines the contract for processing incoming Telegram updates.
 type UserService interface {
 	ProcessMessage(ctx context.Context, tgID int64, username string, text string) (*UserResponse, error)
-	ProcessCallback(ctx context.Context, tgID int64, data string) (*UserResponse, error)
+	ProcessCallback(ctx context.Context, tgID int64, username string, data string) (*UserResponse, error)
 }
 
 type userService struct {
@@ -21,18 +24,29 @@ type userService struct {
 	logger *slog.Logger
 }
 
+// UserResponse holds the bot's reply text and optional inline keyboard buttons.
 type UserResponse struct {
 	Text    string
 	Buttons []string
 }
 
-func (s *userService) ProcessCallback(ctx context.Context, tgID int64, data string) (*UserResponse, error) {
-	user, err := s.repo.GetOrCreateUser(ctx, tgID, "")
+var (
+	phoneRe  = regexp.MustCompile(`^\+?\d{10,15}$`)
+	spacesRe = regexp.MustCompile(`[\s\-\(\)]`)
+)
+
+const FormMainMenu = "main_menu"
+
+// ProcessCallback handles inline keyboard button presses.
+// If the user is mid-survey, the callback data is treated as an answer.
+func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username string, data string) (*UserResponse, error) {
+	user, err := s.repo.GetOrCreateUser(ctx, tgID, username)
 	if err != nil {
+		s.logger.Error("Failed to get or update the user", "user_id", tgID, "error", err)
 		return nil, err
 	}
 
-	if user.CurrentForm != "" && user.CurrentForm != "menu" {
+	if user.CurrentForm != FormMainMenu && user.CurrentForm != "" {
 		return s.handleSurveyStep(ctx, tgID, user, data)
 	}
 
@@ -40,7 +54,7 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, data stri
 	case "Да, заполнить полную форму":
 		return s.startForm(ctx, tgID, "dating_full")
 	case "Нет, спасибо, достаточно":
-		return s.handleEndOfForm(ctx, tgID, "") // Покажет обычное меню
+		return s.handleEndOfForm(ctx, tgID, FormMainMenu)
 	case BtnEvent:
 		return s.startForm(ctx, tgID, "event")
 	case BtnPartner:
@@ -61,7 +75,7 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, data stri
 	case BtnConsult:
 		return s.startForm(ctx, tgID, "consult")
 	default:
-		return s.handleEndOfForm(ctx, tgID, "")
+		return s.handleEndOfForm(ctx, tgID, FormMainMenu)
 	}
 }
 
@@ -71,6 +85,9 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, data stri
 func (s *userService) ProcessMessage(ctx context.Context, tgID int64, username string, text string) (*UserResponse, error) {
 	user, err := s.repo.GetOrCreateUser(ctx, tgID, username)
 	if err != nil {
+		s.logger.Error("Failed to get or update the user",
+			"user_id", tgID,
+			"error", err)
 		return nil, err
 	}
 
@@ -78,40 +95,62 @@ func (s *userService) ProcessMessage(ctx context.Context, tgID int64, username s
 		return s.handleStartCommand(ctx, tgID, user)
 	}
 
-	if user.CurrentForm != "" && user.CurrentForm != "menu" {
+	if user.CurrentForm != FormMainMenu && user.CurrentForm != "" {
 		return s.handleSurveyStep(ctx, tgID, user, text)
 	}
 
-	return s.handleEndOfForm(ctx, tgID, "")
+	return s.handleEndOfForm(ctx, tgID, FormMainMenu)
 }
 
 // startForm initializes survey state for user and returns first question.
 func (s *userService) startForm(ctx context.Context, tgID int64, formName string) (*UserResponse, error) {
 	questions := AllForms[formName]
+	if len(questions) == 0 {
+		return nil, fmt.Errorf("form %s not found", formName)
+	}
 	firstQ := questions[0]
 
 	if err := s.repo.UpdateForm(ctx, tgID, formName); err != nil {
-		s.logger.Error("failed to update form", "error", err)
+		s.logger.Error("failed to update user form",
+			"user_id", tgID,
+			"form_id", formName,
+			"error", err)
 		return nil, err
 	}
+
 	if err := s.repo.UpdateStep(ctx, tgID, firstQ.ID); err != nil {
-		s.logger.Error("failed to update step", "error", err)
+		s.logger.Error("failed to update step",
+			"user_id", tgID,
+			"step_id", formName,
+			"error", err)
 		return nil, err
 	}
 
 	return &UserResponse{Text: firstQ.Text, Buttons: firstQ.Options}, nil
 }
 
+// handleStartCommand resets user into the new_user registration form.
+// Prepends WeclomeText for users who have not yet provided their name.
 func (s *userService) handleStartCommand(ctx context.Context, tgID int64, user *models.User) (*UserResponse, error) {
-	question := AllForms["new_user"]
-	firstQ := question[0]
+	s.logger.Info("start command received", "user_id", tgID)
+	questions := AllForms["new_user"]
+	if len(questions) == 0 {
+		return nil, fmt.Errorf("form %s not found", "new_user")
+	}
+	firstQ := questions[0]
 
 	if err := s.repo.UpdateForm(ctx, tgID, "new_user"); err != nil {
-		s.logger.Error("failed to update form", "error", err)
+		s.logger.Error("failed to update form",
+			"user_id", tgID,
+			"form_id", "new_user",
+			"error", err)
 		return nil, err
 	}
 	if err := s.repo.UpdateStep(ctx, tgID, firstQ.ID); err != nil {
-		s.logger.Error("failed to update step", "error", err)
+		s.logger.Error("failed to update step",
+			"user_id", tgID,
+			"step_id", firstQ.ID,
+			"error", err)
 		return nil, err
 	}
 
@@ -127,11 +166,19 @@ func (s *userService) handleStartCommand(ctx context.Context, tgID int64, user *
 
 }
 
+// handleSurveyStep validates and saves the user's answer for the current step,
+// then advances to the next question or ends the form.
 func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *models.User, text string) (*UserResponse, error) {
+	text = strings.TrimSpace(text)
 	if err := s.validate(user.CurrentStep, text); err != nil {
 		return &UserResponse{Text: err.Error()}, nil
 	}
 	if err := s.repo.SaveAnswer(ctx, tgID, user.CurrentStep, text); err != nil {
+		s.logger.Error("failed to save answer",
+			"user_id", tgID,
+			"step_id", user.CurrentStep,
+			"text", text,
+			"error", err)
 		return nil, err
 	}
 
@@ -141,7 +188,10 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 	}
 
 	if err := s.repo.UpdateStep(ctx, tgID, nextQ.ID); err != nil {
-		s.logger.Error("failed to update step", "error", err)
+		s.logger.Error("failed to update step",
+			"user_id", tgID,
+			"step_id", nextQ.ID,
+			"error", err)
 		return nil, err
 	}
 	return &UserResponse{Text: nextQ.Text, Buttons: nextQ.Options}, nil
@@ -149,10 +199,19 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 
 // handleEndOfForm returns a response with final instructions or suggestions after a survey form is finished.
 func (s *userService) handleEndOfForm(ctx context.Context, tgID int64, currentForm string) (*UserResponse, error) {
-	if err := s.repo.UpdateForm(ctx, tgID, ""); err != nil {
+	if err := s.repo.UpdateForm(ctx, tgID, FormMainMenu); err != nil {
+		s.logger.Error("failed to update form",
+			"user_id", tgID,
+			"form_id", currentForm,
+			"error", err)
 		return nil, err
 	}
 	if err := s.repo.UpdateStep(ctx, tgID, ""); err != nil {
+		s.logger.Error("failed to update step",
+			"user_id", tgID,
+			"form_id", currentForm,
+			"step_id", "",
+			"error", err)
 		return nil, err
 	}
 
@@ -185,7 +244,9 @@ func (s *userService) handleEndOfForm(ctx context.Context, tgID int64, currentFo
 func (s *userService) getNextQuestion(currentForm, currentStep string) *Question {
 	questions, ok := AllForms[currentForm]
 	if !ok {
-		s.logger.Error("Анкета не найдена")
+		s.logger.Error("Анкета не найдена",
+			"form_id", currentForm,
+			"step_id", currentStep)
 		return nil
 	}
 	if currentStep == "" {
@@ -202,9 +263,6 @@ func (s *userService) getNextQuestion(currentForm, currentStep string) *Question
 }
 
 // validate checks the user's input against the requirements of the current survey step.
-//
-// TODO: 1. move regex() to global variables to compile once during startup
-// 2. use strings.trimSpace
 func (s *userService) validate(stepID, answer string) error {
 	if answer == "" {
 		return fmt.Errorf("ответ не может быть пустым")
@@ -218,11 +276,16 @@ func (s *userService) validate(stepID, answer string) error {
 		}
 
 	case "reg_phone":
-		re := regexp.MustCompile(`^\+?\d{10,15}$`)
-		cleanAnswer := regexp.MustCompile(`[\s\-\(\)]`).ReplaceAllString(answer, "")
-
-		if !re.MatchString(cleanAnswer) {
+		if !phoneRe.MatchString(spacesRe.ReplaceAllString(answer, "")) {
 			return fmt.Errorf("пожалуйста, введите корректный номер телефона")
+		}
+	case "event_age", "dating_short_age":
+		age, err := strconv.Atoi(answer)
+		if err != nil {
+			return fmt.Errorf("возраст должен быть числом")
+		}
+		if age < 18 || age > 99 {
+			return fmt.Errorf("возраст должен быть в пределах от 18 до 99")
 		}
 	}
 

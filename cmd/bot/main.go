@@ -4,6 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
@@ -14,7 +17,14 @@ import (
 // main initializes the environment, establishes a database connection,
 // and starts the application bot logic.
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	opts := &slog.HandlerOptions{
+		AddSource: true,
+		Level:     slog.LevelDebug,
+	}
+
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+
+	logger := slog.New(handler)
 	slog.SetDefault(logger)
 
 	if err := godotenv.Load(); err != nil {
@@ -40,12 +50,22 @@ func main() {
 	}
 	slog.Info("Authorized under account", "username", bot.Self.UserName)
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	repo, err := postgres.New(ctx, dsn)
 	if err != nil {
-		slog.Error("Error connecting to database", "error", err)
+		slog.Error("Error connecting to the database", "error", err)
 		os.Exit(1)
 	}
-
-	app.Run(bot, repo, logger)
+	go app.Run(ctx, bot, repo, logger)
+	slog.Info("Bot is running, Press Ctrl+C to stop.")
+	<-ctx.Done()
+	slog.Info("Shutting down gracefully...")
+	_, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := repo.Close(); err != nil {
+		slog.Error("Error closing database", "error", err)
+	}
+	slog.Info("Bot gracefully stopped.")
 }

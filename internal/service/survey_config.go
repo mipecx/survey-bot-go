@@ -1,5 +1,8 @@
 package service
 
+// Question represents a single step in a survey form.
+// Options, if non-empty, are presented to the user as inline keyboard buttons.
+// NextForm is reserved for future branching logic between forms.
 type Question struct {
 	ID       string
 	Text     string
@@ -7,6 +10,7 @@ type Question struct {
 	NextForm string
 }
 
+// Main menu button labels used accross all keyboard responses.
 const (
 	BtnEvent      = "Мероприятия"
 	BtnPartner    = "Подбор партнера"
@@ -30,6 +34,8 @@ const WelcomeText = `Добро пожаловать в пространство
 
 			`
 
+// AllForms is the registry of all available survey forms, keyed by form name.
+// Used by the service layer to look up questins for a given form.
 var AllForms = map[string][]Question{
 	"new_user":     NewUserForm,
 	"event":        EventForm,
@@ -39,12 +45,14 @@ var AllForms = map[string][]Question{
 	"consult":      ConsultForm,
 }
 
+// NewUserForm is the initial registration form shown to every new user.
 var NewUserForm = []Question{
 	{ID: "reg_name", Text: "Как к вам можно обращаться?"},
 	{ID: "reg_phone", Text: "Оставьте ваш контактный номер"},
 	{ID: "reg_birthdate", Text: "Укажите вашу дату рождения (ДД.ММ.ГГГГ)"},
 }
 
+// EventForm collects information for users interested in matchmaking events.
 var EventForm = []Question{
 	{ID: "event_city", Text: "Ваш город?"},
 	{ID: "event_gender", Text: "Ваш пол?", Options: []string{"Женщина", "Мужчина"}},
@@ -54,6 +62,8 @@ var EventForm = []Question{
 	{ID: "event_goal", Text: "Что вам сейчас ближе?", Options: []string{"Серьёзные отношения", "Знакомство", "Окружение", "Узнать формат"}},
 }
 
+// DatingShortForm is the short partner-matching questionnaire.
+// On completion, the user is offered to continue with DatingFullForm.
 var DatingShortForm = []Question{
 	{ID: "dating_short_age", Text: "Ваш возраст?"},
 	{ID: "dating_short_city", Text: "Ваш город?"},
@@ -67,6 +77,7 @@ var DatingShortForm = []Question{
 	{ID: "dating_short_why_now", Text: "Почему именно сейчас вы открыты к отношениям?", NextForm: "DatingFullForm"},
 }
 
+// DatingFullForm is the extended partner-matching questionnaire.
 var DatingFullForm = []Question{
 	{ID: "dating_full_qualities", Text: "Назовите 5 важных качеств вашего партнёра"},
 	{ID: "dating_full_unacceptable", Text: "Какие форматы отношений для вас неприемлемы?"},
@@ -85,10 +96,12 @@ var DatingFullForm = []Question{
 	{ID: "dating_full_recognition", Text: "Как вы понимаете, что человек «ваш»?"},
 }
 
+// PortraitForm collects user's focus area for divine partner protrait session.
 var PortraitForm = []Question{
 	{ID: "portrait_main_focus", Text: "Что для вас сейчас наиболее важно?", Options: []string{"Понять, кто мне подходит", "Почему не складываются отношения", "Повторяющийся сценарий", "Создать зрелый союз"}},
 }
 
+// ConsultForm collects a free-form request for a personal consultation.
 var ConsultForm = []Question{
 	{ID: "consult_request", Text: "Опишите ваш запрос в свободной форме"},
 }
