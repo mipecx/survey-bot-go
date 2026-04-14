@@ -45,11 +45,12 @@ func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username stri
 	var user models.User
 
 	query := `
-        INSERT INTO users (tg_id, username)
-       VALUES ($1, $2)
-        ON CONFLICT (tg_id) DO UPDATE SET username = EXCLUDED.username
-        RETURNING tg_id, username, current_form, current_step, full_name, phone, birth_date, created_at;
-    `
+		INSERT INTO users (tg_id, username)
+		VALUES ($1, $2)
+		ON CONFLICT (tg_id) DO UPDATE
+		SET username = COALESCE(NULLIF($2, ''), users.username)
+		RETURNING tg_id, username, current_form, current_step, full_name, phone, birth_date, created_at;
+	`
 
 	err := s.Pool.QueryRow(ctx, query, tgID, username).Scan(
 		&user.TGID,
@@ -174,4 +175,36 @@ func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value 
 		return fmt.Errorf("failed to save answer (key=%s, tgID=%d): %w", key, tgID, err)
 	}
 	return nil
+}
+
+func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]string, error) {
+	var (
+		fullName  *string
+		phone     *string
+		birthDate *time.Time
+		jsonData  []byte
+	)
+
+	query := `
+		SELECT full_name, phone, birth_date, survey_data
+		FROM users
+		WHERE tg_id = $1
+	`
+	err := s.Pool.QueryRow(ctx, query, tgID).Scan(&fullName, &phone, &birthDate, &jsonData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch answers: %w", err)
+	}
+
+	answers := make(map[string]string)
+
+	if fullName != nil {
+		answers["reg_name"] = *fullName
+	}
+	if phone != nil {
+		answers["reg_phone"] = *phone
+	}
+	if birthDate != nil {
+		answers["reg_birthdate"] = birthDate.Format("02.01.2006")
+	}
+	return answers, nil
 }

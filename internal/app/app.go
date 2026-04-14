@@ -36,7 +36,9 @@ func Run(ctx context.Context, botAPI *tgbotapi.BotAPI, repo repository.UserRepos
 		logger.Warn("No admin IDs provided in ADMIN_IDS environment variable")
 	}
 
-	userService := service.NewUserService(repo, logger)
+	notifier := bot.NewTelegramNotifier(botAPI, adminMap)
+
+	userService := service.NewUserService(repo, logger, notifier, adminMap)
 
 	h := &bot.Handler{
 		Bot:     botAPI,

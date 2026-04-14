@@ -10,3 +10,14 @@ func makeInlineKeyboard(buttons []string) tgbotapi.InlineKeyboardMarkup {
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
+
+func makeReplyKeyboard() tgbotapi.ReplyKeyboardMarkup {
+	keyboard := tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButtonContact("Поделиться номером"),
+		),
+	)
+	keyboard.OneTimeKeyboard = true
+	keyboard.ResizeKeyboard = true
+	return keyboard
+}

@@ -13,6 +13,10 @@ import (
 	"github.com/mipecx/survey-bot-go/internal/repository"
 )
 
+type AdminNotifier interface {
+	Notify(text string) error
+}
+
 // UserService defines the contract for processing incoming Telegram updates.
 type UserService interface {
 	ProcessMessage(ctx context.Context, tgID int64, username string, text string) (*UserResponse, error)
@@ -20,14 +24,17 @@ type UserService interface {
 }
 
 type userService struct {
-	repo   repository.UserRepository
-	logger *slog.Logger
+	repo     repository.UserRepository
+	logger   *slog.Logger
+	notifier AdminNotifier
+	admins   map[int64]bool
 }
 
 // UserResponse holds the bot's reply text and optional inline keyboard buttons.
 type UserResponse struct {
-	Text    string
-	Buttons []string
+	Text      string
+	Buttons   []string
+	InputType InputType
 }
 
 var (
@@ -47,7 +54,7 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username 
 	}
 
 	if user.CurrentForm != FormMainMenu && user.CurrentForm != "" {
-		return s.handleSurveyStep(ctx, tgID, user, data)
+		return s.handleSurveyStep(ctx, tgID, user, data, true)
 	}
 
 	switch data {
@@ -96,7 +103,7 @@ func (s *userService) ProcessMessage(ctx context.Context, tgID int64, username s
 	}
 
 	if user.CurrentForm != FormMainMenu && user.CurrentForm != "" {
-		return s.handleSurveyStep(ctx, tgID, user, text)
+		return s.handleSurveyStep(ctx, tgID, user, text, false)
 	}
 
 	return s.handleEndOfForm(ctx, tgID, FormMainMenu)
@@ -168,11 +175,29 @@ func (s *userService) handleStartCommand(ctx context.Context, tgID int64, user *
 
 // handleSurveyStep validates and saves the user's answer for the current step,
 // then advances to the next question or ends the form.
-func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *models.User, text string) (*UserResponse, error) {
+func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *models.User, text string, isCallback bool) (*UserResponse, error) {
 	text = strings.TrimSpace(text)
-	if err := s.validate(user.CurrentStep, text); err != nil {
-		return &UserResponse{Text: err.Error()}, nil
+
+	questions := AllForms[user.CurrentForm]
+	var currentQ *Question
+	for i := range questions {
+		if questions[i].ID == user.CurrentStep {
+			currentQ = &questions[i]
+			break
+		}
 	}
+
+	if currentQ.Type == InputChoice && !isCallback {
+		return &UserResponse{
+			Text:    "Пожалуйста, выберите вариант из списка ниже\n\n" + currentQ.Text,
+			Buttons: currentQ.Options,
+		}, nil
+	}
+
+	if err := s.validate(currentQ, text); err != nil {
+		return &UserResponse{Text: err.Error(), Buttons: currentQ.Options}, nil
+	}
+
 	if err := s.repo.SaveAnswer(ctx, tgID, user.CurrentStep, text); err != nil {
 		s.logger.Error("failed to save answer",
 			"user_id", tgID,
@@ -183,6 +208,7 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 	}
 
 	nextQ := s.getNextQuestion(user.CurrentForm, user.CurrentStep)
+
 	if nextQ == nil {
 		return s.handleEndOfForm(ctx, tgID, user.CurrentForm)
 	}
@@ -194,7 +220,7 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 			"error", err)
 		return nil, err
 	}
-	return &UserResponse{Text: nextQ.Text, Buttons: nextQ.Options}, nil
+	return &UserResponse{Text: nextQ.Text, Buttons: nextQ.Options, InputType: nextQ.Type}, nil
 }
 
 // handleEndOfForm returns a response with final instructions or suggestions after a survey form is finished.
@@ -213,6 +239,10 @@ func (s *userService) handleEndOfForm(ctx context.Context, tgID int64, currentFo
 			"step_id", "",
 			"error", err)
 		return nil, err
+	}
+
+	if currentForm != FormMainMenu && currentForm != "" {
+		go s.notifyAdmin(tgID, currentForm)
 	}
 
 	switch currentForm {
@@ -263,12 +293,19 @@ func (s *userService) getNextQuestion(currentForm, currentStep string) *Question
 }
 
 // validate checks the user's input against the requirements of the current survey step.
-func (s *userService) validate(stepID, answer string) error {
+func (s *userService) validate(q *Question, answer string) error {
 	if answer == "" {
 		return fmt.Errorf("ответ не может быть пустым")
 	}
 
-	switch stepID {
+	switch q.Type {
+	case InputPhone:
+		if !phoneRe.MatchString(spacesRe.ReplaceAllString(answer, "")) {
+			return fmt.Errorf("пожалуйста, введите корректный номер телефона")
+		}
+	}
+
+	switch q.ID {
 	case "reg_birthdate":
 		_, err := time.Parse("02.01.2006", answer)
 		if err != nil {
@@ -293,9 +330,46 @@ func (s *userService) validate(stepID, answer string) error {
 }
 
 // NewUserService creates and returns a new instance of the UserService implementation.
-func NewUserService(repo repository.UserRepository, logger *slog.Logger) UserService {
+func NewUserService(repo repository.UserRepository, logger *slog.Logger, notifier AdminNotifier, adminMap map[int64]bool) UserService {
 	return &userService{
-		repo:   repo,
-		logger: logger,
+		repo:     repo,
+		logger:   logger,
+		notifier: notifier,
+		admins:   adminMap,
+	}
+}
+
+func (s *userService) notifyAdmin(tgID int64, formID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	user, err := s.repo.GetOrCreateUser(ctx, tgID, "")
+	if err != nil {
+		s.logger.Error("notifyAdmin: user fetch failed", "err", err)
+		return
+	}
+
+	answers, err := s.repo.GetAnswersByForm(ctx, tgID)
+	if err != nil {
+		s.logger.Error("notifyAdmin: answers fetch failed", "err", err)
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<b>Новая анкета: %s</b>\n", formID))
+	sb.WriteString(fmt.Sprintf("<b>Клиент:</b> %s (@%s)\n", *user.FullName, user.Username))
+	sb.WriteString(fmt.Sprintf("<b>ID:</b> <code>%d</code>\n", tgID))
+	sb.WriteString("---------------------------\n\n")
+
+	if questions, ok := AllForms[formID]; ok {
+		for _, q := range questions {
+			if val, exists := answers[q.ID]; exists {
+				sb.WriteString(fmt.Sprintf("<b>%s</b>\n%s\n\n", q.Text, val))
+			}
+		}
+	}
+
+	if err := s.notifier.Notify(sb.String()); err != nil {
+		s.logger.Error("notifyAdmin: send failed", "err", err)
 	}
 }
