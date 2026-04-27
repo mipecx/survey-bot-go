@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -197,6 +198,11 @@ func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]
 
 	answers := make(map[string]string)
 
+	if len(jsonData) > 0 {
+		if err := json.Unmarshal(jsonData, &answers); err != nil {
+			fmt.Printf("warning: failed to unmarshal survey_data: %v\n", err)
+		}
+	}
 	if fullName != nil {
 		answers["reg_name"] = *fullName
 	}

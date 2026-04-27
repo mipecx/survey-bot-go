@@ -1,6 +1,16 @@
 package service
 
+import "os"
+
 type InputType int
+
+func GetCommunityURL() string {
+	url := os.Getenv("COMMUNITY_URL")
+	if url == "" {
+		return "https://t.me/default_group"
+	}
+	return url
+}
 
 const (
 	InputText InputType = iota
@@ -21,11 +31,13 @@ type Question struct {
 
 // Main menu button labels used accross all keyboard responses.
 const (
-	BtnEvent      = "Мероприятия"
-	BtnPartner    = "Подбор партнера"
+	BtnEvent      = "Закрытые вечера знакомств"
+	BtnPartner    = "Индивидуальный подбор партнера"
 	BtnGodPartner = "Подбор божественного партнера"
-	BtnGift       = "Подарок"
-	BtnConsult    = "Консультация с Натальей"
+	BtnGift       = "Получить подарок"
+	BtnConsult    = "Личная консультация с Натальей"
+	BtnCommunity  = "Пространство наполенной женщины"
+	BtnToMainMenu = "Вернуться в главное меню"
 )
 
 const WelcomeText = `Добро пожаловать в пространство Натальи Харисовой 🤍
@@ -55,12 +67,12 @@ var AllForms = map[string][]Question{
 }
 
 var FormEndings = map[string]string{
-	"new_user":     "текст для завершения new_user",
-	"event":        "текст для завершения event",
-	"dating_short": "текст для завершения dating_short",
-	"dating_full":  "текст для завершения dating_full",
-	"portrait":     "текст для завершения portrait",
-	"consult":      "текст для завершения consult",
+	"new_user":     "<b>Приятно познакомиться!</b> ✨\n\nТеперь вам открыт полный доступ к возможностям пространства. Выберите в меню то, что вам сейчас наиболее актуально.",
+	"event":        "<b>Ваша заявка на мероприятие принята!</b> 🥂\n\nНаталья лично просматривает каждое обращение, чтобы создать гармоничное окружение. Мы свяжемся с вами, когда появится подходящее событие.",
+	"dating_short": "<b>Благодарим за ответы!</b> 🤍\n\nЭто поможет нам лучше понять ваш запрос. Если вы готовы к более глубокому разбору, рекомендуем заполнить полную версию анкеты.",
+	"dating_full":  "<b>Ваша анкета получена.</b> 🙏\n\nЭто был важный шаг к осознанным отношениям. Наталья изучит ваши ценности и видение союза, после чего мы свяжемся с вами.",
+	"portrait":     "<b>Запрос на разбор божественного партнера принят!</b> 🕯\n\nНаталья подготовит базу для вашей сессии, чтобы сделать её максимально глубокой и эффективной. Ожидайте сообщения от нас.",
+	"consult":      "<b>Ваша заявка на консультацию отправлена.</b> ✉️\n\nБлагодарим за доверие. Мы свяжемся с вами в ближайшее время, чтобы подобрать удобное время для встречи.",
 }
 
 // NewUserForm is the initial registration form shown to every new user.
@@ -97,7 +109,7 @@ var DatingShortForm = []Question{
 
 // DatingFullForm is the extended partner-matching questionnaire.
 var DatingFullForm = []Question{
-	{ID: "dating_full_qualities", Text: "Назовите 5 важных качеств вашего партнёра", Type: InputText},
+	{ID: "dating_full_qualities", Text: "Назовите  важных качеств вашего партнёра", Type: InputText},
 	{ID: "dating_full_unacceptable", Text: "Какие форматы отношений для вас неприемлемы?", Type: InputText},
 	{ID: "dating_full_mature_union", Text: "Что для вас значит зрелый союз?", Type: InputText},
 	{ID: "dating_full_self_in_relation", Text: "Как вы проявляетесь в отношениях, когда вам хорошо?", Type: InputText},

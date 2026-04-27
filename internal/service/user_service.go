@@ -35,6 +35,7 @@ type UserResponse struct {
 	Text      string
 	Buttons   []string
 	InputType InputType
+	StepID    string
 }
 
 var (
@@ -47,14 +48,28 @@ const FormMainMenu = "main_menu"
 // ProcessCallback handles inline keyboard button presses.
 // If the user is mid-survey, the callback data is treated as an answer.
 func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username string, data string) (*UserResponse, error) {
+	var callbackStepID, cleanValue string
+
+	if parts := strings.SplitN(data, ":", 2); len(parts) == 2 {
+		callbackStepID = parts[0]
+		cleanValue = parts[1]
+	} else {
+		cleanValue = data
+	}
+
 	user, err := s.repo.GetOrCreateUser(ctx, tgID, username)
 	if err != nil {
 		s.logger.Error("Failed to get or update the user", "user_id", tgID, "error", err)
 		return nil, err
 	}
 
+	if callbackStepID != "" && user.CurrentStep != callbackStepID {
+		s.logger.Warn("Old callback ignored", "expected", user.CurrentStep, "got", callbackStepID)
+		return nil, nil
+	}
+
 	if user.CurrentForm != FormMainMenu && user.CurrentForm != "" {
-		return s.handleSurveyStep(ctx, tgID, user, data, true)
+		return s.handleSurveyStep(ctx, tgID, user, cleanValue, true)
 	}
 
 	switch data {
@@ -72,15 +87,23 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username 
 		return &UserResponse{
 			Text: "Гайд «5 признаков зрелых отношений» 📖",
 			Buttons: []string{
+				BtnToMainMenu,
+			},
+		}, nil
+	case BtnConsult:
+		return s.startForm(ctx, tgID, "consult")
+	case BtnToMainMenu:
+		return &UserResponse{
+			Text: "Выберите направление, которое вам сейчас ближе 🤍",
+			Buttons: []string{
 				BtnEvent,
 				BtnPartner,
 				BtnGodPartner,
 				BtnGift,
 				BtnConsult,
+				BtnCommunity,
 			},
 		}, nil
-	case BtnConsult:
-		return s.startForm(ctx, tgID, "consult")
 	default:
 		return s.handleEndOfForm(ctx, tgID, FormMainMenu)
 	}
@@ -220,7 +243,7 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 			"error", err)
 		return nil, err
 	}
-	return &UserResponse{Text: nextQ.Text, Buttons: nextQ.Options, InputType: nextQ.Type}, nil
+	return &UserResponse{Text: nextQ.Text, Buttons: nextQ.Options, InputType: nextQ.Type, StepID: nextQ.ID}, nil
 }
 
 // handleEndOfForm returns a response with final instructions or suggestions after a survey form is finished.
@@ -245,24 +268,26 @@ func (s *userService) handleEndOfForm(ctx context.Context, tgID int64, currentFo
 		go s.notifyAdmin(tgID, currentForm)
 	}
 
+	message, ok := FormEndings[currentForm]
+	if !ok {
+		message = "Выберите направление, которое вам сейчас ближе 🤍"
+	}
+
+	var buttons []string
 	switch currentForm {
 	case "dating_short":
-		return &UserResponse{
-			Text:    "Вы прошли краткую анкету! Хотите заполнить полную версию?",
-			Buttons: []string{"Да, заполнить полную форму", "Нет, спасибо, достаточно"},
-		}, nil
+		message = "Вы прошли краткую анкету! Хотите заполнить полную версию?"
+		buttons = []string{"Да, заполнить полную форму", BtnToMainMenu}
 	default:
-		return &UserResponse{
-			Text: "Выберите направление, которое вам сейчас ближе 🤍",
-			Buttons: []string{
-				BtnEvent,
-				BtnPartner,
-				BtnGodPartner,
-				BtnGift,
-				BtnConsult,
-			},
-		}, nil
+		buttons = []string{
+			BtnToMainMenu,
+		}
 	}
+
+	return &UserResponse{
+		Text:    message,
+		Buttons: buttons,
+	}, nil
 }
 
 // getNextQuestion returns the next survey question based on the current step.
@@ -356,15 +381,15 @@ func (s *userService) notifyAdmin(tgID int64, formID string) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("<b>Новая анкета: %s</b>\n", formID))
-	sb.WriteString(fmt.Sprintf("<b>Клиент:</b> %s (@%s)\n", *user.FullName, user.Username))
-	sb.WriteString(fmt.Sprintf("<b>ID:</b> <code>%d</code>\n", tgID))
-	sb.WriteString("---------------------------\n\n")
-
+	fmt.Fprintf(&sb, "<b>Новая анкета: %s</b>\n", formID)
+	fmt.Fprintf(&sb, "<b>Клиент:</b> %s (@%s)\n", *user.FullName, user.Username)
+	fmt.Fprintf(&sb, "<b>ID:</b> <code>%d</code>\n", tgID)
+	fmt.Fprintf(&sb, "-------------------------\n\n")
+	// TODO: not all forms are showing in notifiation
 	if questions, ok := AllForms[formID]; ok {
 		for _, q := range questions {
 			if val, exists := answers[q.ID]; exists {
-				sb.WriteString(fmt.Sprintf("<b>%s</b>\n%s\n\n", q.Text, val))
+				fmt.Fprintf(&sb, "<b>%s</b>\n%s\n\n", q.Text, val)
 			}
 		}
 	}

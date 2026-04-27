@@ -108,11 +108,12 @@ func (h *Handler) sendResponse(chatID int64, resp *service.UserResponse) {
 		return
 	}
 	msg := tgbotapi.NewMessage(chatID, resp.Text)
+	msg.ParseMode = "HTML"
 
 	if resp.InputType == service.InputPhone {
 		msg.ReplyMarkup = makeReplyKeyboard()
 	} else if len(resp.Buttons) > 0 {
-		msg.ReplyMarkup = makeInlineKeyboard(resp.Buttons)
+		msg.ReplyMarkup = makeInlineKeyboard(resp.StepID, resp.Buttons)
 	} else {
 		msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
 	}

@@ -1,11 +1,29 @@
 package bot
 
-import tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+import (
+	"fmt"
 
-func makeInlineKeyboard(buttons []string) tgbotapi.InlineKeyboardMarkup {
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/mipecx/survey-bot-go/internal/service"
+)
+
+func makeInlineKeyboard(stepID string, buttons []string) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, btnText := range buttons {
-		button := tgbotapi.NewInlineKeyboardButtonData(btnText, btnText)
+		var button tgbotapi.InlineKeyboardButton
+
+		if btnText == service.BtnCommunity {
+			// Создаем кнопку-ссылку, она не шлет callback, а просто открывает браузер/TG
+			button = tgbotapi.NewInlineKeyboardButtonURL(btnText, service.GetCommunityURL())
+		} else {
+			// Обычная логика с привязкой ID вопроса для защиты от спама
+			callbackData := btnText
+			if stepID != "" {
+				callbackData = fmt.Sprintf("%s:%s", stepID, btnText)
+			}
+			button = tgbotapi.NewInlineKeyboardButtonData(btnText, callbackData)
+		}
+
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(button))
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
