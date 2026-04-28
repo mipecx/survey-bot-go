@@ -126,8 +126,7 @@ func (s *Storage) ResetUserProgress(ctx context.Context, tgID int64, form string
 	query := `
 		UPDATE users
 		SET current_form = $1,
-		    current_step = '',
-		    survey_data = '{}'
+		    current_step = ''
 		WHERE tg_id = $2
 	`
 	_, err := s.Pool.Exec(ctx, query, form, tgID)

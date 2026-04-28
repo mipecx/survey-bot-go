@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,6 +24,14 @@ type UserService interface {
 	ProcessCallback(ctx context.Context, tgID int64, username string, data string) (*UserResponse, error)
 }
 
+func GetGiftID() string {
+	url := os.Getenv("GIFT_FILE_ID")
+	if url == "" {
+		return ""
+	}
+	return url
+}
+
 type userService struct {
 	repo     repository.UserRepository
 	logger   *slog.Logger
@@ -36,6 +45,8 @@ type UserResponse struct {
 	Buttons   []string
 	InputType InputType
 	StepID    string
+	Document  string
+	MessageID int
 }
 
 var (
@@ -89,20 +100,14 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username 
 			Buttons: []string{
 				BtnToMainMenu,
 			},
+			Document: GetGiftID(),
 		}, nil
 	case BtnConsult:
 		return s.startForm(ctx, tgID, "consult")
 	case BtnToMainMenu:
 		return &UserResponse{
-			Text: "Выберите направление, которое вам сейчас ближе 🤍",
-			Buttons: []string{
-				BtnEvent,
-				BtnPartner,
-				BtnGodPartner,
-				BtnGift,
-				BtnConsult,
-				BtnCommunity,
-			},
+			Text:    "Выберите направление, которое вам сейчас ближе 🤍",
+			Buttons: MainMenuButtons,
 		}, nil
 	default:
 		return s.handleEndOfForm(ctx, tgID, FormMainMenu)
@@ -163,37 +168,52 @@ func (s *userService) startForm(ctx context.Context, tgID int64, formName string
 // Prepends WeclomeText for users who have not yet provided their name.
 func (s *userService) handleStartCommand(ctx context.Context, tgID int64, user *models.User) (*UserResponse, error) {
 	s.logger.Info("start command received", "user_id", tgID)
-	questions := AllForms["new_user"]
-	if len(questions) == 0 {
-		return nil, fmt.Errorf("form %s not found", "new_user")
-	}
-	firstQ := questions[0]
 
-	if err := s.repo.UpdateForm(ctx, tgID, "new_user"); err != nil {
-		s.logger.Error("failed to update form",
-			"user_id", tgID,
-			"form_id", "new_user",
-			"error", err)
-		return nil, err
-	}
-	if err := s.repo.UpdateStep(ctx, tgID, firstQ.ID); err != nil {
-		s.logger.Error("failed to update step",
-			"user_id", tgID,
-			"step_id", firstQ.ID,
-			"error", err)
-		return nil, err
-	}
+	isOldUser := user != nil && user.FullName != nil && *user.FullName != ""
 
-	text := firstQ.Text
-	if user.FullName == nil || *user.FullName == "" {
-		text = WelcomeText + firstQ.Text
+	isNewUser := !isOldUser
+
+	if isNewUser {
+		questions := AllForms["new_user"]
+		if len(questions) == 0 {
+			return nil, fmt.Errorf("form %s not found", "new_user")
+		}
+		firstQ := questions[0]
+
+		if err := s.repo.UpdateForm(ctx, tgID, "new_user"); err != nil {
+			s.logger.Error("failed to update form",
+				"user_id", tgID,
+				"form_id", "new_user",
+				"error", err)
+			return nil, err
+		}
+		if err := s.repo.UpdateStep(ctx, tgID, firstQ.ID); err != nil {
+			s.logger.Error("failed to update step",
+				"user_id", tgID,
+				"step_id", firstQ.ID,
+				"error", err)
+			return nil, err
+		}
+
+		text := firstQ.Text
+		if user.FullName == nil || *user.FullName == "" {
+			text = WelcomeText + firstQ.Text
+		}
+
+		return &UserResponse{
+			Text:    text,
+			Buttons: firstQ.Options,
+		}, nil
+	}
+	if err := s.repo.ResetUserProgress(ctx, tgID, ""); err != nil {
+		return nil, err
 	}
 
 	return &UserResponse{
-		Text:    text,
-		Buttons: firstQ.Options,
+		Text:    "Рады видеть вас снова! Что вас интересует сегодня?",
+		Buttons: MainMenuButtons,
+		StepID:  "",
 	}, nil
-
 }
 
 // handleSurveyStep validates and saves the user's answer for the current step,
@@ -248,18 +268,10 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 
 // handleEndOfForm returns a response with final instructions or suggestions after a survey form is finished.
 func (s *userService) handleEndOfForm(ctx context.Context, tgID int64, currentForm string) (*UserResponse, error) {
-	if err := s.repo.UpdateForm(ctx, tgID, FormMainMenu); err != nil {
+	if err := s.repo.ResetUserProgress(ctx, tgID, FormMainMenu); err != nil {
 		s.logger.Error("failed to update form",
 			"user_id", tgID,
 			"form_id", currentForm,
-			"error", err)
-		return nil, err
-	}
-	if err := s.repo.UpdateStep(ctx, tgID, ""); err != nil {
-		s.logger.Error("failed to update step",
-			"user_id", tgID,
-			"form_id", currentForm,
-			"step_id", "",
 			"error", err)
 		return nil, err
 	}
@@ -278,6 +290,8 @@ func (s *userService) handleEndOfForm(ctx context.Context, tgID int64, currentFo
 	case "dating_short":
 		message = "Вы прошли краткую анкету! Хотите заполнить полную версию?"
 		buttons = []string{"Да, заполнить полную форму", BtnToMainMenu}
+	case "new_user":
+		buttons = MainMenuButtons
 	default:
 		buttons = []string{
 			BtnToMainMenu,

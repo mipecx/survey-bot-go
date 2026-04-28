@@ -99,6 +99,12 @@ func (h *Handler) handleCallback(ctx context.Context, callback *tgbotapi.Callbac
 		h.Logger.Error("callback error", "err", err)
 		return
 	}
+
+	// ФИКС: Передаем ID сообщения из колбэка в структуру ответа
+	if resp != nil {
+		resp.MessageID = callback.Message.MessageID
+	}
+
 	h.sendResponse(chatID, resp)
 }
 
@@ -107,18 +113,49 @@ func (h *Handler) sendResponse(chatID int64, resp *service.UserResponse) {
 	if resp == nil {
 		return
 	}
-	msg := tgbotapi.NewMessage(chatID, resp.Text)
-	msg.ParseMode = "HTML"
 
-	if resp.InputType == service.InputPhone {
-		msg.ReplyMarkup = makeReplyKeyboard()
-	} else if len(resp.Buttons) > 0 {
-		msg.ReplyMarkup = makeInlineKeyboard(resp.StepID, resp.Buttons)
+	var err error
+
+	// Проверяем: если это Callback (MessageID != 0) и тип ввода НЕ телефон
+	// (Потому что Reply Keyboard нельзя прикрепить к EditMessage)
+	if resp.MessageID != 0 && resp.InputType != service.InputPhone {
+		edit := tgbotapi.NewEditMessageText(chatID, resp.MessageID, resp.Text)
+		edit.ParseMode = "HTML"
+
+		if len(resp.Buttons) > 0 {
+			markup := makeInlineKeyboard(resp.StepID, resp.Buttons)
+			edit.ReplyMarkup = &markup
+		}
+
+		_, err = h.Bot.Send(edit)
+
+		// Если вдруг сообщение уже удалено или оно такое же (Telegram выдает ошибку),
+		// можно зафолбэчиться на отправку нового, но пока оставим логирование
 	} else {
-		msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+		// Шлем новое сообщение (для команд, обычного текста или сбора телефона)
+		msg := tgbotapi.NewMessage(chatID, resp.Text)
+		msg.ParseMode = "HTML"
+
+		if resp.InputType == service.InputPhone {
+			msg.ReplyMarkup = makeReplyKeyboard()
+		} else if len(resp.Buttons) > 0 {
+			msg.ReplyMarkup = makeInlineKeyboard(resp.StepID, resp.Buttons)
+		} else {
+			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+		}
+
+		_, err = h.Bot.Send(msg)
 	}
 
-	if _, err := h.Bot.Send(msg); err != nil {
-		h.Logger.Error("failed to send message", "chat_id", chatID, "error", err)
+	if err != nil {
+		h.Logger.Error("failed to process message response", "chat_id", chatID, "error", err)
+	}
+
+	// Отправка подарка (PDF) всегда идет отдельным сообщением после текста
+	if resp.Document != "" {
+		doc := tgbotapi.NewDocument(chatID, tgbotapi.FileID(resp.Document))
+		if _, err := h.Bot.Send(doc); err != nil {
+			h.Logger.Error("failed to send gift document", "chat_id", chatID, "error", err)
+		}
 	}
 }

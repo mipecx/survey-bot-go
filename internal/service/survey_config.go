@@ -40,6 +40,17 @@ const (
 	BtnToMainMenu = "Вернуться в главное меню"
 )
 
+var (
+	MainMenuButtons = []string{
+		BtnEvent,
+		BtnPartner,
+		BtnGodPartner,
+		BtnGift,
+		BtnConsult,
+		BtnCommunity,
+	}
+)
+
 const WelcomeText = `Добро пожаловать в пространство Натальи Харисовой 🤍
 
 			Здесь вы можете:
