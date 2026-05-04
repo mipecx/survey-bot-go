@@ -3,48 +3,48 @@ package app
 import (
 	"context"
 	"log/slog"
-	"os"
-	"strconv"
-	"strings"
+	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/mipecx/survey-bot-go/internal/bot"
+	"github.com/mipecx/survey-bot-go/internal/config"
 	"github.com/mipecx/survey-bot-go/internal/repository"
 	"github.com/mipecx/survey-bot-go/internal/service"
 )
 
 // Run initializes application components, sets up administrative access,
 // and starts the main update loop to process incoming messages.
-func Run(ctx context.Context, botAPI *tgbotapi.BotAPI, repo repository.UserRepository, logger *slog.Logger) {
-	adminMap := make(map[int64]bool)
-	rawAdmins := os.Getenv("ADMIN_IDS")
-
-	for _, s := range strings.Split(rawAdmins, ",") {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		id, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			logger.Error("Failed to parse Admin_ID", "value", s, "err", err)
-			continue
-		}
-		adminMap[id] = true
+func Run(ctx context.Context, botAPI *tgbotapi.BotAPI, repo repository.UserRepository, logger *slog.Logger, cfg *config.Config) {
+	m, err := migrate.New("file://migrations", cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("failed to init migrations", "error", err)
+		return
 	}
 
-	if len(adminMap) == 0 {
-		logger.Warn("No admin IDs provided in ADMIN_IDS environment variable")
+	defer m.Close()
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		logger.Error("failed to apply migrations", "error", err)
+		return
 	}
 
-	notifier := bot.NewTelegramNotifier(botAPI, adminMap)
+	logger.Info("migrations applied successfully")
 
-	userService := service.NewUserService(repo, logger, notifier, adminMap)
+	notifier := bot.NewTelegramNotifier(botAPI, cfg.AdminIDs, logger)
+
+	userService := service.NewUserService(repo, logger, notifier, cfg)
+
+	var wg sync.WaitGroup
 
 	h := &bot.Handler{
-		Bot:     botAPI,
-		Admins:  adminMap,
-		Service: userService,
-		Logger:  logger,
+		Bot:            botAPI,
+		Admins:         cfg.AdminIDs,
+		Service:        userService,
+		Logger:         logger,
+		WG:             &wg,
+		CommunityURL:   cfg.CommunityURL,
+		WelcomeImageID: cfg.WeclomeImageID,
 	}
 
 	u := tgbotapi.NewUpdate(0)
@@ -56,32 +56,19 @@ func Run(ctx context.Context, botAPI *tgbotapi.BotAPI, repo repository.UserRepos
 		select {
 		case <-ctx.Done():
 			logger.Info("Stopping update loop...")
+			botAPI.StopReceivingUpdates()
+			wg.Wait()
 			return
 		case update, ok := <-updates:
 			if !ok {
-				logger.Error("Update channel closed unexpectedly")
 				return
 			}
 
-			var (
-				userID   int64
-				username string
-			)
-			if update.Message != nil {
-				userID = update.Message.From.ID
-				username = update.Message.From.UserName
-			} else if update.CallbackQuery != nil {
-				userID = update.CallbackQuery.From.ID
-				username = update.CallbackQuery.From.UserName
-			}
-
-			if userID != 0 {
-				logger.Info("Update received",
-					slog.Int64("user_id", userID),
-					slog.String("username", username))
-			}
-
-			go h.HandleUpdate(update)
+			wg.Add(1)
+			go func(upd tgbotapi.Update) {
+				defer wg.Done()
+				h.HandleUpdate(upd)
+			}(update)
 		}
 	}
 }

@@ -2,21 +2,29 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/mipecx/survey-bot-go/internal/ctxlog"
 	"github.com/mipecx/survey-bot-go/internal/service"
 )
 
 // Hander processes incoming Telegram updates and delegates business logic to Service.
 // userLocks ensures that concurrent updates from the same user are processed sequentially.
 type Handler struct {
-	Bot       *tgbotapi.BotAPI
-	Admins    map[int64]bool
-	Service   service.UserService
-	Logger    *slog.Logger
-	userLocks sync.Map
+	Bot            *tgbotapi.BotAPI
+	Admins         map[int64]bool
+	Service        service.UserService
+	Logger         *slog.Logger
+	userLocks      sync.Map
+	WG             *sync.WaitGroup
+	lastBotMsg     sync.Map
+	CommunityURL   string
+	WelcomeImageID string
 }
 
 func (h *Handler) extractTGID(update tgbotapi.Update) int64 {
@@ -31,8 +39,13 @@ func (h *Handler) extractTGID(update tgbotapi.Update) int64 {
 
 // HandleUpdate routes the update to be handled in callback or message handler
 func (h *Handler) HandleUpdate(update tgbotapi.Update) {
-	ctx := context.Background()
 	tgID := h.extractTGID(update)
+
+	requestID := fmt.Sprintf("%d-%d", tgID, time.Now().UnixNano())
+	ctx := context.WithValue(context.Background(), ctxlog.CtxKeyRequestID, requestID)
+	ctx = context.WithValue(ctx, ctxlog.CtxKeyUserID, tgID)
+	logger := h.Logger.With("request_id", requestID, "user_id", tgID)
+	ctx = context.WithValue(ctx, ctxlog.CtxKeyLogger, logger)
 
 	lock, _ := h.userLocks.LoadOrStore(tgID, &sync.Mutex{})
 	mtx := lock.(*sync.Mutex)
@@ -43,13 +56,13 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 		h.handleCallback(ctx, update.CallbackQuery)
 		return
 	}
-
 	if update.Message != nil {
 		h.handleMessage(ctx, update.Message)
 	}
 }
 
 func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
+	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
 	var resp *service.UserResponse
 	var err error
 
@@ -61,13 +74,19 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	case msg.Contact != nil:
 		resp, err = h.Service.ProcessMessage(ctx, userID, username, msg.Contact.PhoneNumber)
 		if err != nil {
-			h.Logger.Error("error during phone collection", "user_id", userID, "error", err)
+			logger.Error("Error during phone collection", "user_id", userID, "error", err)
+		}
+		if resp != nil && resp.Edit {
+			if msgID, ok := h.lastBotMsg.Load(chatID); ok {
+				resp.MessageID = msgID.(int)
+			}
+			h.Bot.Send(tgbotapi.NewDeleteMessage(chatID, msg.MessageID))
 		}
 	case msg.IsCommand():
 		if msg.Command() == "start" {
 			resp, err = h.Service.ProcessMessage(ctx, userID, username, "/start")
 			if err != nil {
-				h.Logger.Error("error during /start command", "user_id", userID, "error", err)
+				logger.Error("Error during /start command", "user_id", userID, "error", err)
 			}
 		} else {
 			return
@@ -75,15 +94,23 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	case msg.Text != "":
 		resp, err = h.Service.ProcessMessage(ctx, userID, username, msg.Text)
 		if err != nil {
-			h.Logger.Error("error during text processing", "user_id", userID, "error", err)
+			logger.Error("Error during text processing", "user_id", userID, "error", err)
+		}
+		if resp != nil && resp.Edit {
+			if msgID, ok := h.lastBotMsg.Load(chatID); ok {
+				resp.MessageID = msgID.(int)
+			}
+			h.Bot.Send(tgbotapi.NewDeleteMessage(chatID, msg.MessageID))
 		}
 	default:
 		return
 	}
-	h.sendResponse(chatID, resp)
+	h.sendResponse(ctx, chatID, resp)
 }
 
 func (h *Handler) handleCallback(ctx context.Context, callback *tgbotapi.CallbackQuery) {
+	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
+
 	chatID := callback.Message.Chat.ID
 	data := callback.Data
 	userID := callback.From.ID
@@ -91,71 +118,112 @@ func (h *Handler) handleCallback(ctx context.Context, callback *tgbotapi.Callbac
 
 	callbackCfg := tgbotapi.NewCallback(callback.ID, "")
 	if _, err := h.Bot.Request(callbackCfg); err != nil {
-		h.Logger.Error("failed to answer callback query", "chat_id", chatID, "error", err)
+		logger.Error("Failed to answer callback query", "chat_id", chatID, "error", err)
 	}
 
 	resp, err := h.Service.ProcessCallback(ctx, userID, username, data)
 	if err != nil {
-		h.Logger.Error("callback error", "err", err)
+		logger.Error("Callback error", "error", err)
 		return
 	}
 
-	// ФИКС: Передаем ID сообщения из колбэка в структуру ответа
 	if resp != nil {
 		resp.MessageID = callback.Message.MessageID
+		resp.Edit = true
 	}
 
-	h.sendResponse(chatID, resp)
+	h.sendResponse(ctx, chatID, resp)
 }
 
 // sendResponse sends a text message to the given chat, with an inline keyboard if buttons are provided.
-func (h *Handler) sendResponse(chatID int64, resp *service.UserResponse) {
+func (h *Handler) sendResponse(ctx context.Context, chatID int64, resp *service.UserResponse) {
+	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
+
 	if resp == nil {
 		return
 	}
 
-	var err error
-
-	// Проверяем: если это Callback (MessageID != 0) и тип ввода НЕ телефон
-	// (Потому что Reply Keyboard нельзя прикрепить к EditMessage)
-	if resp.MessageID != 0 && resp.InputType != service.InputPhone {
-		edit := tgbotapi.NewEditMessageText(chatID, resp.MessageID, resp.Text)
-		edit.ParseMode = "HTML"
-
-		if len(resp.Buttons) > 0 {
-			markup := makeInlineKeyboard(resp.StepID, resp.Buttons)
-			edit.ReplyMarkup = &markup
-		}
-
-		_, err = h.Bot.Send(edit)
-
-		// Если вдруг сообщение уже удалено или оно такое же (Telegram выдает ошибку),
-		// можно зафолбэчиться на отправку нового, но пока оставим логирование
-	} else {
-		// Шлем новое сообщение (для команд, обычного текста или сбора телефона)
-		msg := tgbotapi.NewMessage(chatID, resp.Text)
-		msg.ParseMode = "HTML"
-
-		if resp.InputType == service.InputPhone {
-			msg.ReplyMarkup = makeReplyKeyboard()
-		} else if len(resp.Buttons) > 0 {
-			msg.ReplyMarkup = makeInlineKeyboard(resp.StepID, resp.Buttons)
-		} else {
-			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
-		}
-
-		_, err = h.Bot.Send(msg)
-	}
-
-	if err != nil {
-		h.Logger.Error("failed to process message response", "chat_id", chatID, "error", err)
-	}
-
-	// Отправка подарка (PDF) всегда идет отдельным сообщением после текста
 	if resp.Document != "" {
+		if resp.MessageID != 0 {
+			del := tgbotapi.NewDeleteMessage(chatID, resp.MessageID)
+			if _, err := h.Bot.Send(del); err != nil {
+				logger.Warn("Failed to delete menu message", "user_id", chatID, "msg_id", resp.MessageID, "error", err)
+			}
+		}
 		doc := tgbotapi.NewDocument(chatID, tgbotapi.FileID(resp.Document))
 		if _, err := h.Bot.Send(doc); err != nil {
-			h.Logger.Error("failed to send gift document", "chat_id", chatID, "error", err)
+			logger.Error("Failed to send document", "user_id", chatID, "error", err)
+		}
+
+		resp.Edit = false
+		resp.MessageID = 0
+	}
+
+	if resp.SendWelcomeImage && h.WelcomeImageID != "" {
+		photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileID(h.WelcomeImageID))
+		h.Bot.Send(photo)
+	}
+
+	if !h.trySendEdit(ctx, chatID, resp) {
+		h.trySendMessage(ctx, chatID, resp)
+	}
+}
+
+// trySendEdit пытается отредактировать существующее сообщение.
+// Возвращает true, если редактирование прошло успешно (документ всё равно нужно отправить).
+func (h *Handler) trySendEdit(ctx context.Context, chatID int64, resp *service.UserResponse) bool {
+	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
+
+	if !resp.Edit || resp.MessageID == 0 || resp.InputType == service.InputPhone {
+		logger.Info("Skip edit", "edit", resp.Edit, "message_id", resp.MessageID, "input_type", resp.InputType)
+		return false
+	}
+
+	edit := tgbotapi.NewEditMessageText(chatID, resp.MessageID, resp.Text)
+	edit.ParseMode = "HTML"
+	if len(resp.Buttons) > 0 {
+		markup := makeInlineKeyboard(resp.StepID, resp.Buttons, h.CommunityURL)
+		edit.ReplyMarkup = &markup
+	}
+
+	result, err := h.Bot.Send(edit)
+	if err != nil {
+		if !strings.Contains(err.Error(), "not modified") {
+			logger.Error("Failed to edit message", "user_id", chatID, "error", err)
+		}
+		return strings.Contains(err.Error(), "not modified")
+	}
+	h.lastBotMsg.Store(chatID, result.MessageID)
+	return true
+}
+
+func (h *Handler) trySendMessage(ctx context.Context, chatID int64, resp *service.UserResponse) {
+	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
+
+	if resp.Edit && resp.MessageID != 0 {
+		h.Bot.Send(tgbotapi.NewDeleteMessage(chatID, resp.MessageID))
+	} else if resp.Edit && resp.InputType == service.InputPhone {
+		if msgID, ok := h.lastBotMsg.Load(chatID); ok {
+			h.Bot.Send(tgbotapi.NewDeleteMessage(chatID, msgID.(int)))
 		}
 	}
+
+	msg := tgbotapi.NewMessage(chatID, resp.Text)
+	msg.ParseMode = "HTML"
+
+	switch {
+	case resp.InputType == service.InputPhone:
+		msg.ReplyMarkup = makeReplyKeyboard()
+	case len(resp.Buttons) > 0:
+		msg.ReplyMarkup = makeInlineKeyboard(resp.StepID, resp.Buttons, h.CommunityURL)
+	default:
+		msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+	}
+
+	sent, err := h.Bot.Send(msg)
+	if err != nil {
+		logger.Error("Failed to send message", "user_id", chatID, "error", err)
+		return
+	}
+	h.lastBotMsg.Store(chatID, sent.MessageID)
 }

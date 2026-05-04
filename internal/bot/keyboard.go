@@ -7,16 +7,14 @@ import (
 	"github.com/mipecx/survey-bot-go/internal/service"
 )
 
-func makeInlineKeyboard(stepID string, buttons []string) tgbotapi.InlineKeyboardMarkup {
+func makeInlineKeyboard(stepID string, buttons []string, communityURL string) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, btnText := range buttons {
 		var button tgbotapi.InlineKeyboardButton
 
 		if btnText == service.BtnCommunity {
-			// Создаем кнопку-ссылку, она не шлет callback, а просто открывает браузер/TG
-			button = tgbotapi.NewInlineKeyboardButtonURL(btnText, service.GetCommunityURL())
+			button = tgbotapi.NewInlineKeyboardButtonURL(btnText, communityURL)
 		} else {
-			// Обычная логика с привязкой ID вопроса для защиты от спама
 			callbackData := btnText
 			if stepID != "" {
 				callbackData = fmt.Sprintf("%s:%s", stepID, btnText)

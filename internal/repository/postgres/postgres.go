@@ -3,16 +3,22 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mipecx/survey-bot-go/internal/ctxlog"
 	"github.com/mipecx/survey-bot-go/internal/models"
 )
 
+var ErrInvalidValueType = errors.New("invalid value type in survey data")
+
 // Storage wraps a pgxpool connection pool and implements userRepository.
 type Storage struct {
-	Pool *pgxpool.Pool
+	Pool   *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // Close gracefully closes the underlying connection pool.
@@ -25,24 +31,27 @@ func (r *Storage) Close() error {
 
 // New creates a new PostgreSQL connection pool and verifies connectivity via ping.
 // Returns an error if the pool can not be created or database in unreachable.
-func New(ctx context.Context, connString string) (*Storage, error) {
+func New(ctx context.Context, connString string, logger *slog.Logger) (*Storage, error) {
 	pool, err := pgxpool.New(ctx, connString)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create connection pool: %w", err)
+		logger.Error("Database: unable to create connection pool", "error", err)
+		return nil, err
 	}
 
 	err = pool.Ping(ctx)
 	if err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("database ping failed: %w", err)
+		logger.Error("Database: ping failed", "error", err)
+		return nil, err
 	}
 
-	return &Storage{Pool: pool}, nil
+	return &Storage{Pool: pool, logger: logger}, nil
 }
 
 // GetOrCreateUser inserts a new user or updates the username on conflict,
 // returning the current user record.
 func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username string) (*models.User, error) {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	var user models.User
 
 	query := `
@@ -50,7 +59,7 @@ func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username stri
 		VALUES ($1, $2)
 		ON CONFLICT (tg_id) DO UPDATE
 		SET username = COALESCE(NULLIF($2, ''), users.username)
-		RETURNING tg_id, username, current_form, current_step, full_name, phone, birth_date, created_at;
+		RETURNING tg_id, username, current_form, current_step, full_name, phone, birth_date, pending_form, created_at;
 	`
 
 	err := s.Pool.QueryRow(ctx, query, tgID, username).Scan(
@@ -61,11 +70,13 @@ func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username stri
 		&user.FullName,
 		&user.Phone,
 		&user.BirthDate,
+		&user.PendingForm,
 		&user.CreatedAt,
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get or create user: %w", err)
+		logger.Error("Database: failed to get or create user", "error", err)
+		return nil, err
 	}
 
 	return &user, nil
@@ -73,24 +84,28 @@ func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username stri
 
 // GetStep returns the current survey step ID for the given user.
 func (s *Storage) GetStep(ctx context.Context, tgID int64) (string, error) {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	var step string
 	query := `SELECT current_step FROM users WHERE tg_id = $1`
 
 	err := s.Pool.QueryRow(ctx, query, tgID).Scan(&step)
 	if err != nil {
-		return "", fmt.Errorf("failed to get step: %w", err)
+		logger.Error("Database: failed to get step", "error", err)
+		return "", err
 	}
 	return step, nil
 }
 
 // UpdateStep sets the current survey step ID for the given user.
 func (s *Storage) UpdateStep(ctx context.Context, tgID int64, step string) error {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	query := `UPDATE users SET current_step = $1 WHERE tg_id = $2`
 
 	_, err := s.Pool.Exec(ctx, query, step, tgID)
 
 	if err != nil {
-		return fmt.Errorf("failed to update step: %w", err)
+		logger.Error("Database: failed to update step", "error", err)
+		return err
 	}
 
 	return nil
@@ -98,31 +113,36 @@ func (s *Storage) UpdateStep(ctx context.Context, tgID int64, step string) error
 
 // GetForm returns the current form name for the given user.
 func (s *Storage) GetForm(ctx context.Context, tgID int64) (string, error) {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	var step string
 	query := `SELECT current_form FROM users WHERE tg_id = $1`
 
 	err := s.Pool.QueryRow(ctx, query, tgID).Scan(&step)
 	if err != nil {
-		return "", fmt.Errorf("failed to get form: %w", err)
+		logger.Error("Database: failed to get form", "error", err)
+		return "", err
 	}
 	return step, nil
 }
 
 // UpdateForm sets the current form name for the given user.
 func (s *Storage) UpdateForm(ctx context.Context, tgID int64, form string) error {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	query := `UPDATE users SET current_form = $1 WHERE tg_id = $2`
 
 	_, err := s.Pool.Exec(ctx, query, form, tgID)
 
 	if err != nil {
-		return fmt.Errorf("failed to update form: %w", err)
+		logger.Error("Database: failed to update form", "error", err)
+		return err
 	}
 
 	return nil
 }
 
-// ResetUserProgress resets the user's form, step, and survey_data to their initial state.
+// ResetUserProgress resets the user's form, step to their initial state.
 func (s *Storage) ResetUserProgress(ctx context.Context, tgID int64, form string) error {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	query := `
 		UPDATE users
 		SET current_form = $1,
@@ -131,7 +151,8 @@ func (s *Storage) ResetUserProgress(ctx context.Context, tgID int64, form string
 	`
 	_, err := s.Pool.Exec(ctx, query, form, tgID)
 	if err != nil {
-		return fmt.Errorf("failed to reset progress: %w", err)
+		logger.Error("Database: failed to reset progress", "error", err)
+		return err
 	}
 	return nil
 }
@@ -140,12 +161,17 @@ func (s *Storage) ResetUserProgress(ctx context.Context, tgID int64, form string
 // Structured fields (full_name, phone, birth_date) are saved to dedicated columns;
 // all other answers are merged into the survey_data JSONB column.
 func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value any) error {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	var query string
 	var args []any
 
 	valStr, ok := value.(string)
 	if !ok {
-		return fmt.Errorf("expected string value for key %s, got %T", key, value)
+		logger.Error("Database: type mismatch in survey data",
+			"key", key,
+			"expected", "string",
+			"got_type", fmt.Sprintf("%T", value))
+		return ErrInvalidValueType
 	}
 
 	switch key {
@@ -158,7 +184,8 @@ func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value 
 	case "reg_birthdate":
 		parsedDate, err := time.Parse("02.01.2006", valStr)
 		if err != nil {
-			return fmt.Errorf("database level date parse failed: %w", err)
+			logger.Error("Database: level date parse failed", "error", err)
+			return err
 		}
 		query = `UPDATE users SET birth_date = $1 WHERE tg_id = $2`
 		args = []any{parsedDate, tgID}
@@ -172,12 +199,17 @@ func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value 
 
 	_, err := s.Pool.Exec(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("failed to save answer (key=%s, tgID=%d): %w", key, tgID, err)
+		logger.Error("Database: exec failed",
+			"query_type", key,
+			"user_id", tgID,
+			"error", err)
+		return fmt.Errorf("db: failed to save %s: %w", key, err)
 	}
 	return nil
 }
 
 func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]string, error) {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	var (
 		fullName  *string
 		phone     *string
@@ -192,14 +224,17 @@ func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]
 	`
 	err := s.Pool.QueryRow(ctx, query, tgID).Scan(&fullName, &phone, &birthDate, &jsonData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch answers: %w", err)
+		logger.Error("Database: failed to fetch answers", "error", err)
+		return nil, err
 	}
 
 	answers := make(map[string]string)
 
 	if len(jsonData) > 0 {
 		if err := json.Unmarshal(jsonData, &answers); err != nil {
-			fmt.Printf("warning: failed to unmarshal survey_data: %v\n", err)
+			logger.Warn("Database: failed to unmarshal survey_data, starting with empty map",
+				"user_id", tgID,
+				"error", err)
 		}
 	}
 	if fullName != nil {
@@ -212,4 +247,22 @@ func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]
 		answers["reg_birthdate"] = birthDate.Format("02.01.2006")
 	}
 	return answers, nil
+}
+
+func (s *Storage) SetPendingForm(ctx context.Context, tgID int64, form string) error {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
+	_, err := s.Pool.Exec(ctx, `UPDATE users SET pending_form = $1 WHERE tg_id = $2`, form, tgID)
+	if err != nil {
+		logger.Error("Database: failed to set pending_form", "error", err)
+	}
+	return err
+}
+
+func (s *Storage) ClearPendingForm(ctx context.Context, tgID int64) error {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
+	_, err := s.Pool.Exec(ctx, `UPDATE users SET pending_form = NULL WHERE tg_id = $2`, tgID)
+	if err != nil {
+		logger.Error("Database: failed to clear pending form", "error", err)
+	}
+	return err
 }

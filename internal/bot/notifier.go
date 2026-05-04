@@ -1,7 +1,7 @@
 package bot
 
 import (
-	"fmt"
+	"log/slog"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -9,15 +9,16 @@ import (
 type TelegramNotifier struct {
 	bot    *tgbotapi.BotAPI
 	admins map[int64]bool
+	logger *slog.Logger
 }
 
-func NewTelegramNotifier(bot *tgbotapi.BotAPI, admins map[int64]bool) *TelegramNotifier {
-	return &TelegramNotifier{bot: bot, admins: admins}
+func NewTelegramNotifier(bot *tgbotapi.BotAPI, admins map[int64]bool, logger *slog.Logger) *TelegramNotifier {
+	return &TelegramNotifier{bot: bot, admins: admins, logger: logger}
 }
 
 func (n *TelegramNotifier) Notify(text string) error {
 	if len(n.admins) == 0 {
-		fmt.Println("Нотификатор: список админов пуст!")
+		n.logger.Warn("Notifier: admin list is empty, no one to notify")
 		return nil
 	}
 
@@ -27,9 +28,14 @@ func (n *TelegramNotifier) Notify(text string) error {
 
 		_, err := n.bot.Send(msg)
 		if err != nil {
-			fmt.Printf("Ошибка уведомления админа %d: %v\n", adminID, err)
+			n.logger.Error("Notifier: failed to send notification",
+				"admin_id", adminID,
+				"error", err,
+			)
 		} else {
-			fmt.Printf("Уведомление отправлено админу %d\n", adminID)
+			n.logger.Info("Notifier: admin notified successfully",
+				"admin_id", adminID,
+			)
 		}
 	}
 	return nil

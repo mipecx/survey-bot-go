@@ -16,4 +16,6 @@ type UserRepository interface {
 	ResetUserProgress(ctx context.Context, tgID int64, form string) error
 	SaveAnswer(ctx context.Context, tgID int64, key string, value any) error
 	GetAnswersByForm(ctx context.Context, tgID int64) (map[string]string, error)
+	SetPendingForm(ctx context.Context, tgID int64, form string) error
+	ClearPendingForm(ctx context.Context, tgID int64) error
 }
