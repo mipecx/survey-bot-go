@@ -44,7 +44,7 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 	requestID := fmt.Sprintf("%d-%d", tgID, time.Now().UnixNano())
 	ctx := context.WithValue(context.Background(), ctxlog.CtxKeyRequestID, requestID)
 	ctx = context.WithValue(ctx, ctxlog.CtxKeyUserID, tgID)
-	logger := h.Logger.With("request_id", requestID, "user_id", tgID)
+	logger := h.Logger.With("request_id", requestID)
 	ctx = context.WithValue(ctx, ctxlog.CtxKeyLogger, logger)
 
 	lock, _ := h.userLocks.LoadOrStore(tgID, &sync.Mutex{})
@@ -74,7 +74,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	case msg.Contact != nil:
 		resp, err = h.Service.ProcessMessage(ctx, userID, username, msg.Contact.PhoneNumber)
 		if err != nil {
-			logger.Error("Error during phone collection", "user_id", userID, "error", err)
+			logger.Error("Error during phone collection", "error", err)
 		}
 		if resp != nil && resp.Edit {
 			if msgID, ok := h.lastBotMsg.Load(chatID); ok {
@@ -86,7 +86,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		if msg.Command() == "start" {
 			resp, err = h.Service.ProcessMessage(ctx, userID, username, "/start")
 			if err != nil {
-				logger.Error("Error during /start command", "user_id", userID, "error", err)
+				logger.Error("Error during /start command", "error", err)
 			}
 		} else {
 			return
@@ -94,7 +94,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	case msg.Text != "":
 		resp, err = h.Service.ProcessMessage(ctx, userID, username, msg.Text)
 		if err != nil {
-			logger.Error("Error during text processing", "user_id", userID, "error", err)
+			logger.Error("Error during text processing", "error", err)
 		}
 		if resp != nil && resp.Edit {
 			if msgID, ok := h.lastBotMsg.Load(chatID); ok {
@@ -147,12 +147,12 @@ func (h *Handler) sendResponse(ctx context.Context, chatID int64, resp *service.
 		if resp.MessageID != 0 {
 			del := tgbotapi.NewDeleteMessage(chatID, resp.MessageID)
 			if _, err := h.Bot.Send(del); err != nil {
-				logger.Warn("Failed to delete menu message", "user_id", chatID, "msg_id", resp.MessageID, "error", err)
+				logger.Warn("Failed to delete menu message", "msg_id", resp.MessageID, "error", err)
 			}
 		}
 		doc := tgbotapi.NewDocument(chatID, tgbotapi.FileID(resp.Document))
 		if _, err := h.Bot.Send(doc); err != nil {
-			logger.Error("Failed to send document", "user_id", chatID, "error", err)
+			logger.Error("Failed to send document", "error", err)
 		}
 
 		resp.Edit = false
@@ -189,7 +189,7 @@ func (h *Handler) trySendEdit(ctx context.Context, chatID int64, resp *service.U
 	result, err := h.Bot.Send(edit)
 	if err != nil {
 		if !strings.Contains(err.Error(), "not modified") {
-			logger.Error("Failed to edit message", "user_id", chatID, "error", err)
+			logger.Error("Failed to edit message", "error", err)
 		}
 		return strings.Contains(err.Error(), "not modified")
 	}
@@ -222,7 +222,7 @@ func (h *Handler) trySendMessage(ctx context.Context, chatID int64, resp *servic
 
 	sent, err := h.Bot.Send(msg)
 	if err != nil {
-		logger.Error("Failed to send message", "user_id", chatID, "error", err)
+		logger.Error("Failed to send message", "error", err)
 		return
 	}
 	h.lastBotMsg.Store(chatID, sent.MessageID)

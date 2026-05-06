@@ -201,7 +201,6 @@ func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value 
 	if err != nil {
 		logger.Error("Database: exec failed",
 			"query_type", key,
-			"user_id", tgID,
 			"error", err)
 		return fmt.Errorf("db: failed to save %s: %w", key, err)
 	}
@@ -233,7 +232,6 @@ func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]
 	if len(jsonData) > 0 {
 		if err := json.Unmarshal(jsonData, &answers); err != nil {
 			logger.Warn("Database: failed to unmarshal survey_data, starting with empty map",
-				"user_id", tgID,
 				"error", err)
 		}
 	}
@@ -260,7 +258,7 @@ func (s *Storage) SetPendingForm(ctx context.Context, tgID int64, form string) e
 
 func (s *Storage) ClearPendingForm(ctx context.Context, tgID int64) error {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
-	_, err := s.Pool.Exec(ctx, `UPDATE users SET pending_form = NULL WHERE tg_id = $2`, tgID)
+	_, err := s.Pool.Exec(ctx, `UPDATE users SET pending_form = NULL WHERE tg_id = $1`, tgID)
 	if err != nil {
 		logger.Error("Database: failed to clear pending form", "error", err)
 	}

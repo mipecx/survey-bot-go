@@ -12,7 +12,7 @@ func makeInlineKeyboard(stepID string, buttons []string, communityURL string) tg
 	for _, btnText := range buttons {
 		var button tgbotapi.InlineKeyboardButton
 
-		if btnText == service.BtnCommunity {
+		if btnText == service.BtnCommunity || btnText == service.BtnGift {
 			button = tgbotapi.NewInlineKeyboardButtonURL(btnText, communityURL)
 		} else {
 			callbackData := btnText

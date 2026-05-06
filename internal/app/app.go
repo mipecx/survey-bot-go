@@ -7,6 +7,10 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/golang-migrate/migrate/v4"
+
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+
 	"github.com/mipecx/survey-bot-go/internal/bot"
 	"github.com/mipecx/survey-bot-go/internal/config"
 	"github.com/mipecx/survey-bot-go/internal/repository"

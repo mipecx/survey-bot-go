@@ -23,21 +23,21 @@ type Question struct {
 const (
 	BtnEvent      = "Закрытые вечера Архитектуры любви"
 	BtnPartner    = "Индивидуальный подбор партнёра"
-	BtnGodPartner = "Портрет подходящего партнёра"
-	BtnGift       = "Гид о зрелых союзах"
-	BtnConsult    = "Личная работа с Натальей"
-	BtnCommunity  = "__Сслыка на группу__"
+	BtnGodPartner = "Портрет божественного партнёра"
+	BtnGift       = "Гайды и чек-листы"
+	BtnConsult    = "Консультация с Натальей"
+	BtnCommunity  = "Пространство наполненной женщины"
 	BtnToMainMenu = "Вернуться в главное меню"
 )
 
 var (
 	MainMenuButtons = []string{
-		BtnEvent,
-		BtnPartner,
+		BtnConsult,
 		BtnGodPartner,
 		BtnGift,
+		BtnPartner,
+		BtnEvent,
 		BtnCommunity,
-		BtnConsult,
 	}
 )
 

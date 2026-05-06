@@ -90,7 +90,7 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username 
 
 	user, err := s.repo.GetOrCreateUser(ctx, tgID, username)
 	if err != nil {
-		logger.Error("Failed to get or update the user", "user_id", tgID, "error", err)
+		logger.Error("Failed to get or update the user", "error", err)
 		return nil, err
 	}
 
@@ -114,14 +114,15 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username 
 		return s.startFormOrCollectContact(ctx, tgID, user, "dating_short")
 	case BtnGodPartner:
 		return s.startFormOrCollectContact(ctx, tgID, user, "portrait")
-	case BtnGift:
-		return &UserResponse{
-			Text: "Гайд «5 признаков зрелых отношений» 📖",
-			Buttons: []string{
-				BtnToMainMenu,
-			},
-			Document: s.giftFileID,
-		}, nil
+	/* case BtnGift:
+	return &UserResponse{
+		Text: "Гайд «5 признаков зрелых отношений» 📖",
+		Buttons: []string{
+			BtnToMainMenu,
+		},
+		Document: s.giftFileID,
+	}, nil
+	*/
 	case BtnConsult:
 		return s.startFormOrCollectContact(ctx, tgID, user, "consult")
 	case BtnToMainMenu:
@@ -142,7 +143,6 @@ func (s *userService) ProcessMessage(ctx context.Context, tgID int64, username s
 	user, err := s.repo.GetOrCreateUser(ctx, tgID, username)
 	if err != nil {
 		logger.Error("Failed to get or update the user",
-			"user_id", tgID,
 			"error", err)
 		return nil, err
 	}
@@ -163,14 +163,13 @@ func (s *userService) startForm(ctx context.Context, tgID int64, formName string
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	questions, ok := AllForms[formName]
 	if !ok || len(questions) == 0 {
-		logger.Error("Form configuration missing", "form_name", formName, "user_id", tgID)
+		logger.Error("Form configuration missing", "form_name", formName)
 		return nil, ErrFormNotFound
 	}
 	firstQ := questions[0]
 
 	if err := s.repo.UpdateForm(ctx, tgID, formName); err != nil {
 		logger.Error("Failed to update user form",
-			"user_id", tgID,
 			"form_id", formName,
 			"error", err)
 		return nil, err
@@ -178,7 +177,6 @@ func (s *userService) startForm(ctx context.Context, tgID int64, formName string
 
 	if err := s.repo.UpdateStep(ctx, tgID, firstQ.ID); err != nil {
 		logger.Error("Failed to update step",
-			"user_id", tgID,
 			"step_id", formName,
 			"error", err)
 		return nil, err
@@ -197,7 +195,7 @@ func (s *userService) startForm(ctx context.Context, tgID int64, formName string
 // Prepends WeclomeText for users who have not yet provided their name.
 func (s *userService) handleStartCommand(ctx context.Context, tgID int64, user *models.User) (*UserResponse, error) {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
-	logger.Info("Start command received", "user_id", tgID)
+	logger.Info("Start command received")
 
 	isRegistered := user.FullName != nil && *user.FullName != ""
 
@@ -211,14 +209,12 @@ func (s *userService) handleStartCommand(ctx context.Context, tgID int64, user *
 
 		if err := s.repo.UpdateForm(ctx, tgID, "new_user"); err != nil {
 			logger.Error("Failed to update form",
-				"user_id", tgID,
 				"form_id", "new_user",
 				"error", err)
 			return nil, err
 		}
 		if err := s.repo.UpdateStep(ctx, tgID, firstQ.ID); err != nil {
 			logger.Error("Failed to update step",
-				"user_id", tgID,
 				"step_id", firstQ.ID,
 				"error", err)
 			return nil, err
@@ -240,7 +236,7 @@ func (s *userService) handleStartCommand(ctx context.Context, tgID int64, user *
 	}
 
 	return &UserResponse{
-		Text:    "Рады видеть вас снова! Что вас интересует сегодня?",
+		Text:    "Рады, что вы заглянули в пространство Архитектуры любви. С чего вы хотели бы начать сегодня?",
 		Buttons: MainMenuButtons,
 		StepID:  "",
 	}, nil
@@ -254,7 +250,7 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 
 	questions, ok := AllForms[user.CurrentForm]
 	if !ok || len(questions) == 0 {
-		logger.Error("Form not found or empty", "form_id", user.CurrentForm, "user_id", tgID)
+		logger.Error("Form not found or empty", "form_id", user.CurrentForm)
 		return s.handleStartCommand(ctx, tgID, user)
 	}
 
@@ -268,7 +264,6 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 
 	if currentQ == nil {
 		logger.Warn("Current step not found, resetting to start",
-			"user_id", tgID,
 			"current_step", user.CurrentStep)
 		return s.handleStartCommand(ctx, tgID, user)
 	}
@@ -297,7 +292,7 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 	nextQ := s.getNextQuestion(ctx, user.CurrentForm, user.CurrentStep)
 
 	if nextQ == nil {
-		logger.Info("User finished form", "user_id", tgID, "form_id", user.CurrentForm)
+		logger.Info("User finished form", "form_id", user.CurrentForm)
 		return s.handleEndOfForm(ctx, tgID, user.CurrentForm)
 	}
 
@@ -318,7 +313,6 @@ func (s *userService) handleEndOfForm(ctx context.Context, tgID int64, currentFo
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	if err := s.repo.ResetUserProgress(ctx, tgID, FormMainMenu); err != nil {
 		logger.Error("Failed to update form",
-			"user_id", tgID,
 			"form_id", currentForm,
 			"error", err)
 		return nil, err
@@ -468,7 +462,7 @@ func (s *userService) notifyAdmin(ctx context.Context, tgID int64, formID string
 	}
 
 	fmt.Fprintf(&sb, "<b>Новая анкета: %s</b>\n", formID)
-	fmt.Fprintf(&sb, "<b>Клиент:</b> %s (@%s)\n", fullName, username)
+	fmt.Fprintf(&sb, "<b>Клиент:</b> %s (%s)\n", fullName, username)
 	fmt.Fprintf(&sb, "<b>ID:</b> <code>%d</code>\n", tgID)
 	fmt.Fprintf(&sb, "-------------------------\n\n")
 	if questions, ok := AllForms[formID]; ok {
