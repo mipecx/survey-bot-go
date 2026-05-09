@@ -79,19 +79,26 @@ const FormMainMenu = "main_menu"
 // If the user is mid-survey, the callback data is treated as an answer.
 func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username string, data string) (*UserResponse, error) {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
-	var callbackStepID, cleanValue string
-
-	if parts := strings.SplitN(data, ":", 2); len(parts) == 2 {
-		callbackStepID = parts[0]
-		cleanValue = parts[1]
-	} else {
-		cleanValue = data
-	}
 
 	user, err := s.repo.GetOrCreateUser(ctx, tgID, username)
 	if err != nil {
 		logger.Error("Failed to get or update the user", "error", err)
 		return nil, err
+	}
+
+	var callbackStepID, cleanValue string
+
+	if parts := strings.SplitN(data, ":", 2); len(parts) == 2 {
+		callbackStepID = parts[0]
+		raw := parts[1]
+
+		if idx, err := strconv.Atoi(raw); err == nil {
+			cleanValue = resolveOption(user.CurrentForm, callbackStepID, idx, raw)
+		} else {
+			cleanValue = raw
+		}
+	} else {
+		cleanValue = data
 	}
 
 	if callbackStepID != "" && user.CurrentStep != callbackStepID {
@@ -125,6 +132,8 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username 
 	*/
 	case BtnConsult:
 		return s.startFormOrCollectContact(ctx, tgID, user, "consult")
+	case BtnProgram:
+		return s.startFormOrCollectContact(ctx, tgID, user, "authors_programm")
 	case BtnToMainMenu:
 		return &UserResponse{
 			Text:    "Выберите направление, которое вам сейчас ближе 🤍",
@@ -173,6 +182,32 @@ func (s *userService) startForm(ctx context.Context, tgID int64, formName string
 			"form_id", formName,
 			"error", err)
 		return nil, err
+	}
+
+	if fields, ok := FormAutoFields[formName]; ok {
+		user, err := s.repo.GetOrCreateUser(ctx, tgID, "")
+		if err == nil {
+			for answerKey, profileField := range fields {
+				switch profileField {
+				case "age":
+					if user.BirthDate != nil {
+						years := time.Now().Year() - user.BirthDate.Year()
+						if time.Now().YearDay() < user.BirthDate.YearDay() {
+							years--
+						}
+						_ = s.repo.SaveAnswer(ctx, tgID, answerKey, fmt.Sprintf("%d", years))
+					}
+				case "city":
+					if user.City != nil && *user.City != "" {
+						_ = s.repo.SaveAnswer(ctx, tgID, answerKey, *user.City)
+					}
+				case "gender":
+					if user.Gender != nil && *user.Gender != "" {
+						_ = s.repo.SaveAnswer(ctx, tgID, answerKey, *user.Gender)
+					}
+				}
+			}
+		}
 	}
 
 	if err := s.repo.UpdateStep(ctx, tgID, firstQ.ID); err != nil {
@@ -246,7 +281,17 @@ func (s *userService) handleStartCommand(ctx context.Context, tgID int64, user *
 // then advances to the next question or ends the form.
 func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *models.User, text string, isCallback bool) (*UserResponse, error) {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
+
 	text = strings.TrimSpace(text)
+
+	if text == BtnToMainMenu {
+		if err := s.repo.UpdateForm(ctx, tgID, string(FormMainMenu)); err != nil {
+			return nil, err
+		}
+		return s.handleStartCommand(ctx, tgID, user)
+	}
+
+	logger.Info("compare", "text_bytes", []byte(text), "btn_bytes", []byte(BtnToMainMenu), "equal", text == BtnToMainMenu)
 
 	questions, ok := AllForms[user.CurrentForm]
 	if !ok || len(questions) == 0 {
@@ -344,7 +389,7 @@ func (s *userService) handleEndOfForm(ctx context.Context, tgID int64, currentFo
 			return nil, err
 		}
 		if pending != nil && *pending != "" {
-			return s.startForm(ctx, tgID, *pending, true)
+			return s.startForm(ctx, tgID, *pending, false)
 		}
 		buttons = MainMenuButtons
 		message = FormEndings["new_user"]
@@ -357,7 +402,7 @@ func (s *userService) handleEndOfForm(ctx context.Context, tgID int64, currentFo
 	return &UserResponse{
 		Text:    message,
 		Buttons: buttons,
-		Edit:    currentForm != "new_user",
+		Edit:    currentForm != "new_user" && lastQuestionType(currentForm) != InputText,
 	}, nil
 }
 
@@ -461,12 +506,35 @@ func (s *userService) notifyAdmin(ctx context.Context, tgID int64, formID string
 		username = "@" + user.Username
 	}
 
+	age := ""
+	if user.BirthDate != nil {
+		years := time.Now().Year() - user.BirthDate.Year()
+		if time.Now().YearDay() < user.BirthDate.YearDay() {
+			years--
+		}
+		age = fmt.Sprintf("%d", years)
+	}
+	city := ""
+	if user.City != nil {
+		city = *user.City
+	}
+	gender := ""
+	if user.Gender != nil {
+		gender = *user.Gender
+	}
+
 	fmt.Fprintf(&sb, "<b>Новая анкета: %s</b>\n", formID)
 	fmt.Fprintf(&sb, "<b>Клиент:</b> %s (%s)\n", fullName, username)
 	fmt.Fprintf(&sb, "<b>ID:</b> <code>%d</code>\n", tgID)
+	fmt.Fprintf(&sb, "<b>Возраст:</b> %s\n", age)
+	fmt.Fprintf(&sb, "<b>Город:</b> %s\n", city)
+	fmt.Fprintf(&sb, "<b>Пол:</b> %s\n", gender)
 	fmt.Fprintf(&sb, "-------------------------\n\n")
 	if questions, ok := AllForms[formID]; ok {
 		for _, q := range questions {
+			if q.InfoOnly {
+				continue
+			}
 			if val, exists := answers[q.ID]; exists {
 				fmt.Fprintf(&sb, "<b>%s</b>\n%s\n\n", q.Text, val)
 			}
@@ -479,7 +547,7 @@ func (s *userService) notifyAdmin(ctx context.Context, tgID int64, formID string
 }
 
 func (s *userService) isContactComplete(user *models.User) bool {
-	return user.Phone != nil && *user.Phone != "" && user.BirthDate != nil
+	return user.Phone != nil && *user.Phone != "" && user.BirthDate != nil && user.City != nil && user.Gender != nil
 }
 
 func (s *userService) startFormOrCollectContact(ctx context.Context, tgID int64, user *models.User, targetForm string) (*UserResponse, error) {
@@ -491,4 +559,25 @@ func (s *userService) startFormOrCollectContact(ctx context.Context, tgID int64,
 		return nil, error
 	}
 	return s.startForm(ctx, tgID, "contact", true)
+}
+
+func resolveOption(formName, stepID string, idx int, fallback string) string {
+	questions, ok := AllForms[formName]
+	if !ok {
+		return fallback
+	}
+	for _, q := range questions {
+		if q.ID == stepID && idx < len(q.Options) {
+			return q.Options[idx]
+		}
+	}
+	return fallback
+}
+
+func lastQuestionType(formName string) InputType {
+	questions, ok := AllForms[formName]
+	if !ok || len(questions) == 0 {
+		return InputText
+	}
+	return questions[len(questions)-1].Type
 }

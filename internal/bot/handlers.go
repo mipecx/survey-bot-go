@@ -188,10 +188,15 @@ func (h *Handler) trySendEdit(ctx context.Context, chatID int64, resp *service.U
 
 	result, err := h.Bot.Send(edit)
 	if err != nil {
-		if !strings.Contains(err.Error(), "not modified") {
-			logger.Error("Failed to edit message", "error", err)
+		if strings.Contains(err.Error(), "not modified") {
+			return true
 		}
-		return strings.Contains(err.Error(), "not modified")
+		logger.Error("Failed to edit message", "error", err, "input_type", resp.InputType)
+		if resp.MessageID != 0 {
+			h.Bot.Send(tgbotapi.NewDeleteMessage(chatID, resp.MessageID))
+			resp.MessageID = 0
+		}
+		return false
 	}
 	h.lastBotMsg.Store(chatID, result.MessageID)
 	return true

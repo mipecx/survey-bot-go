@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d arch_bot"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d arch_bot"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -21,10 +21,10 @@ services:
     image: migrate/migrate
     container_name: arch_bot_migrate
     volumes:
-      - ./migrations:/migrations
+      - ./migrations:/migrations:ro
     command: [
       "-path", "/migrations",
-      "-database", "postgres://user:password@db:5432/arch_bot?sslmode=disable",
+      "-database", "postgres://${DB_USER}:${DB_PASSWORD}@db:5432/arch_bot?sslmode=disable",
       "up"
     ]
     depends_on:

@@ -9,19 +9,17 @@ import (
 
 func makeInlineKeyboard(stepID string, buttons []string, communityURL string) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
-	for _, btnText := range buttons {
+	for i, btnText := range buttons {
 		var button tgbotapi.InlineKeyboardButton
-
 		if btnText == service.BtnCommunity || btnText == service.BtnGift {
 			button = tgbotapi.NewInlineKeyboardButtonURL(btnText, communityURL)
 		} else {
 			callbackData := btnText
 			if stepID != "" {
-				callbackData = fmt.Sprintf("%s:%s", stepID, btnText)
+				callbackData = fmt.Sprintf("%s:%d", stepID, i)
 			}
 			button = tgbotapi.NewInlineKeyboardButtonData(btnText, callbackData)
 		}
-
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(button))
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)

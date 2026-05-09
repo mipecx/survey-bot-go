@@ -59,7 +59,7 @@ func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username stri
 		VALUES ($1, $2)
 		ON CONFLICT (tg_id) DO UPDATE
 		SET username = COALESCE(NULLIF($2, ''), users.username)
-		RETURNING tg_id, username, current_form, current_step, full_name, phone, birth_date, pending_form, created_at;
+		RETURNING tg_id, username, current_form, current_step, full_name, phone, birth_date, pending_form, city, gender, created_at;
 	`
 
 	err := s.Pool.QueryRow(ctx, query, tgID, username).Scan(
@@ -71,6 +71,8 @@ func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username stri
 		&user.Phone,
 		&user.BirthDate,
 		&user.PendingForm,
+		&user.City,
+		&user.Gender,
 		&user.CreatedAt,
 	)
 
@@ -189,6 +191,12 @@ func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value 
 		}
 		query = `UPDATE users SET birth_date = $1 WHERE tg_id = $2`
 		args = []any{parsedDate, tgID}
+	case "reg_city":
+		query = `UPDATE users SET city = $1 WHERE tg_id = $2`
+		args = []any{value, tgID}
+	case "reg_gender":
+		query = `UPDATE users SET gender = $1 WHERE tg_id = $2`
+		args = []any{value, tgID}
 	default:
 		query = `
             UPDATE users
@@ -213,15 +221,17 @@ func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]
 		fullName  *string
 		phone     *string
 		birthDate *time.Time
+		city      *string
+		gender    *string
 		jsonData  []byte
 	)
 
 	query := `
-		SELECT full_name, phone, birth_date, survey_data
+		SELECT full_name, phone, birth_date, city, gender, survey_data
 		FROM users
 		WHERE tg_id = $1
 	`
-	err := s.Pool.QueryRow(ctx, query, tgID).Scan(&fullName, &phone, &birthDate, &jsonData)
+	err := s.Pool.QueryRow(ctx, query, tgID).Scan(&fullName, &phone, &birthDate, &city, &gender, &jsonData)
 	if err != nil {
 		logger.Error("Database: failed to fetch answers", "error", err)
 		return nil, err
@@ -243,6 +253,12 @@ func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]
 	}
 	if birthDate != nil {
 		answers["reg_birthdate"] = birthDate.Format("02.01.2006")
+	}
+	if city != nil {
+		answers["reg_city"] = *city
+	}
+	if gender != nil {
+		answers["reg_gender"] = *gender
 	}
 	return answers, nil
 }

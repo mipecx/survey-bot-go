@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/golang-migrate/migrate/v4"
 
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -20,21 +19,6 @@ import (
 // Run initializes application components, sets up administrative access,
 // and starts the main update loop to process incoming messages.
 func Run(ctx context.Context, botAPI *tgbotapi.BotAPI, repo repository.UserRepository, logger *slog.Logger, cfg *config.Config) {
-	m, err := migrate.New("file://migrations", cfg.DatabaseURL)
-	if err != nil {
-		logger.Error("failed to init migrations", "error", err)
-		return
-	}
-
-	defer m.Close()
-
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		logger.Error("failed to apply migrations", "error", err)
-		return
-	}
-
-	logger.Info("migrations applied successfully")
-
 	notifier := bot.NewTelegramNotifier(botAPI, cfg.AdminIDs, logger)
 
 	userService := service.NewUserService(repo, logger, notifier, cfg)
