@@ -15,6 +15,7 @@ import (
 	"github.com/mipecx/survey-bot-go/internal/ctxlog"
 	"github.com/mipecx/survey-bot-go/internal/models"
 	"github.com/mipecx/survey-bot-go/internal/repository"
+	"github.com/mipecx/survey-bot-go/internal/sheets"
 )
 
 var (
@@ -54,6 +55,7 @@ type userService struct {
 	admins      map[int64]bool
 	giftFileID  string
 	ImageFileID string
+	sheets      *sheets.Client
 }
 
 // UserResponse holds the bot's reply text and optional inline keyboard buttons.
@@ -132,6 +134,8 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username 
 	*/
 	case BtnConsult:
 		return s.startFormOrCollectContact(ctx, tgID, user, "consult")
+	case BtnWebinar:
+		return s.startFormOrCollectContact(ctx, tgID, user, "webinar")
 	case BtnProgram:
 		return s.startFormOrCollectContact(ctx, tgID, user, "authors_programm")
 	case BtnToMainMenu:
@@ -467,13 +471,14 @@ func (s *userService) validate(q *Question, answer string) error {
 }
 
 // NewUserService creates and returns a new instance of the UserService implementation.
-func NewUserService(repo repository.UserRepository, logger *slog.Logger, notifier AdminNotifier, cfg *config.Config) UserService {
+func NewUserService(repo repository.UserRepository, logger *slog.Logger, notifier AdminNotifier, cfg *config.Config, sheetsClient *sheets.Client) UserService {
 	return &userService{
 		repo:       repo,
 		logger:     logger,
 		notifier:   notifier,
 		admins:     cfg.AdminIDs,
 		giftFileID: cfg.GiftFileID,
+		sheets:     sheetsClient,
 	}
 }
 
@@ -544,6 +549,14 @@ func (s *userService) notifyAdmin(ctx context.Context, tgID int64, formID string
 	if err := s.notifier.Notify(sb.String()); err != nil {
 		logger.Error("NotifyAdmin: send failed", "error", err)
 	}
+
+	if s.sheets != nil {
+		sheetName := formSheetName(formID)
+		row := buildSheetRow(formID, tgID, fullName, username, age, city, gender, answers)
+		if err := s.sheets.AppendRow(ctx, sheetName, row); err != nil {
+			logger.Error("NotifyAdmin: sheets append failed", "error", err)
+		}
+	}
 }
 
 func (s *userService) isContactComplete(user *models.User) bool {
@@ -580,4 +593,63 @@ func lastQuestionType(formName string) InputType {
 		return InputText
 	}
 	return questions[len(questions)-1].Type
+}
+
+func formSheetName(formID string) string {
+	names := map[string]string{
+		"new_user":         "Регистрация",
+		"contact":          "Контакты",
+		"event":            "Вечера",
+		"dating_short":     "Подбор партнёра (краткая)",
+		"dating_full":      "Подбор партнёра (полная)",
+		"portrait":         "Портрет партнёра",
+		"consult":          "Консультация",
+		"authors_programm": "Программа",
+		"webinar":          "Вебинар 14 мая",
+	}
+	if name, ok := names[formID]; ok {
+		return name
+	}
+	return formID
+}
+
+func buildSheetRow(formID string, tgID int64, fullName, username, age, city, gender string, answers map[string]string) []any {
+	row := []any{
+		time.Now().Format("02.01.2006 15:04"),
+		fullName,
+		username,
+		fmt.Sprintf("%d", tgID),
+		age,
+		city,
+		gender,
+	}
+	if questions, ok := AllForms[formID]; ok {
+		for _, q := range questions {
+			if q.InfoOnly {
+				continue
+			}
+			row = append(row, answers[q.ID])
+		}
+	}
+	return row
+}
+
+func BuildSheetConfigs() []sheets.SheetConfig {
+	baseHeaders := []string{"Дата", "Имя", "Username", "ID", "Возраст", "Город", "Пол"}
+
+	var configs []sheets.SheetConfig
+	for formID, questions := range AllForms {
+		headers := make([]string, len(baseHeaders))
+		copy(headers, baseHeaders)
+		for _, q := range questions {
+			if !q.InfoOnly {
+				headers = append(headers, q.Text)
+			}
+		}
+		configs = append(configs, sheets.SheetConfig{
+			Name:    formSheetName(formID),
+			Headers: headers,
+		})
+	}
+	return configs
 }

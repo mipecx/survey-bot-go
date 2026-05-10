@@ -14,14 +14,24 @@ import (
 	"github.com/mipecx/survey-bot-go/internal/config"
 	"github.com/mipecx/survey-bot-go/internal/repository"
 	"github.com/mipecx/survey-bot-go/internal/service"
+	"github.com/mipecx/survey-bot-go/internal/sheets"
 )
 
 // Run initializes application components, sets up administrative access,
 // and starts the main update loop to process incoming messages.
 func Run(ctx context.Context, botAPI *tgbotapi.BotAPI, repo repository.UserRepository, logger *slog.Logger, cfg *config.Config) {
+	sheetsClient, err := sheets.New(ctx, cfg.GoogleCredentials, cfg.GoogleSheetsID, logger)
+	if err != nil {
+		logger.Error("failed to init google sheets", "error", err)
+	} else {
+		if err := sheetsClient.InitSheets(ctx, service.BuildSheetConfigs()); err != nil {
+			logger.Error("failed to init sheets structure", "error", err)
+		}
+	}
+
 	notifier := bot.NewTelegramNotifier(botAPI, cfg.AdminIDs, logger)
 
-	userService := service.NewUserService(repo, logger, notifier, cfg)
+	userService := service.NewUserService(repo, logger, notifier, cfg, sheetsClient)
 
 	var wg sync.WaitGroup
 

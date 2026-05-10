@@ -10,13 +10,15 @@ import (
 )
 
 type Config struct {
-	BotToken       string
-	DatabaseURL    string
-	AdminIDs       map[int64]bool
-	CommunityURL   string
-	GiftFileID     string
-	WeclomeImageID string
-	LogLevel       slog.Level
+	BotToken          string
+	DatabaseURL       string
+	AdminIDs          map[int64]bool
+	CommunityURL      string
+	GiftFileID        string
+	WeclomeImageID    string
+	LogLevel          slog.Level
+	GoogleSheetsID    string
+	GoogleCredentials string
 }
 
 func MustLoad() *Config {
@@ -25,13 +27,15 @@ func MustLoad() *Config {
 	}
 
 	cfg := &Config{
-		BotToken:       os.Getenv("BOT_TOKEN"),
-		DatabaseURL:    os.Getenv("DATABASE_URL"),
-		CommunityURL:   getEnv("COMMUNITY_URL", "https://t.me/default_group"),
-		GiftFileID:     os.Getenv("GIFT_FILE_ID"),
-		LogLevel:       parseLogLevel(os.Getenv("LOG_LEVEL")),
-		AdminIDs:       make(map[int64]bool),
-		WeclomeImageID: os.Getenv("WELCOME_IMAGE_ID"),
+		BotToken:          os.Getenv("BOT_TOKEN"),
+		DatabaseURL:       os.Getenv("DATABASE_URL"),
+		CommunityURL:      getEnv("COMMUNITY_URL", "https://t.me/default_group"),
+		GiftFileID:        os.Getenv("GIFT_FILE_ID"),
+		LogLevel:          parseLogLevel(os.Getenv("LOG_LEVEL")),
+		AdminIDs:          make(map[int64]bool),
+		WeclomeImageID:    os.Getenv("WELCOME_IMAGE_ID"),
+		GoogleSheetsID:    os.Getenv("GOOGLE_SHEETS_ID"),
+		GoogleCredentials: getEnv("GOOGLE_CREDENTIALS_FILE", "credentials.json"),
 	}
 
 	rawAdmins := os.Getenv("ADMIN_IDS")
