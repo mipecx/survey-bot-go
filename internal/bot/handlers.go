@@ -98,12 +98,26 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			h.Bot.Send(tgbotapi.NewDeleteMessage(chatID, msg.MessageID))
 		}
 	case msg.IsCommand():
-		if msg.Command() == "start" {
+		switch msg.Command() {
+		case "start":
 			resp, err = h.Service.ProcessMessage(ctx, userID, username, "/start")
 			if err != nil {
 				logger.Error("Error during /start command", "error", err)
 			}
-		} else {
+		case "broadcast":
+			if !h.Admins[userID] {
+				return
+			}
+			text := msg.CommandArguments()
+			if text == "" {
+				h.Bot.Send(tgbotapi.NewMessage(chatID, "Использование: /broadcast <текст>"))
+				return
+			}
+			sent, failed := h.Service.Broadcast(ctx, text)
+			h.Bot.Send(tgbotapi.NewMessage(chatID,
+				fmt.Sprintf("✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed)))
+			return
+		default:
 			return
 		}
 	case msg.Text != "":

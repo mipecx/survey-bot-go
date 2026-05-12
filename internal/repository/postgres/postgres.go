@@ -295,3 +295,25 @@ func (s *Storage) ClearPendingForm(ctx context.Context, tgID int64) error {
 	}
 	return err
 }
+
+// GetAllUserIDs returns the Telegram user IDs of all registered users.
+// Used by Broadcast to enumerate delivery targets.
+func (s *Storage) GetAllUserIDs(ctx context.Context) ([]int64, error) {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
+	rows, err := s.Pool.Query(ctx, `SELECT tg_id FROM users`)
+	if err != nil {
+		logger.Error("database: failed to get user ids", "error", err)
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			logger.Error("database: failed to scan user id", "error", err)
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}

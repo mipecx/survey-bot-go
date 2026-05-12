@@ -31,7 +31,7 @@ func Run(ctx context.Context, botAPI *tgbotapi.BotAPI, repo repository.UserRepos
 
 	notifier := bot.NewTelegramNotifier(botAPI, cfg.AdminIDs, logger)
 
-	userService := service.NewUserService(repo, logger, notifier, cfg, sheetsClient)
+	userService := service.NewUserService(repo, logger, notifier, notifier, cfg, sheetsClient)
 
 	var wg sync.WaitGroup
 

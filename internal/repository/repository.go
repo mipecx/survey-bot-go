@@ -46,4 +46,8 @@ type UserRepository interface {
 
 	// ClearPendingForm removes the pending form redirect after it has been consumed.
 	ClearPendingForm(ctx context.Context, tgID int64) error
+
+	// GetAllUserIDs returns the Telegram user IDs of all registered users.
+	// Used to enumerate targets for broadcast delivery.
+	GetAllUserIDs(ctx context.Context) ([]int64, error)
 }

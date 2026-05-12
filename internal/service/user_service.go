@@ -39,10 +39,17 @@ type AdminNotifier interface {
 	Notify(text string) error
 }
 
+// UserNotifier is implemented by any type that can deliver
+// a message to a specific Telegram user.
+type UserNotifier interface {
+	NotifyUser(tgID int64, text string) error
+}
+
 // UserService defines the contract for processing incoming Telegram updates.
 type UserService interface {
 	ProcessMessage(ctx context.Context, tgID int64, username string, text string) (*UserResponse, error)
 	ProcessCallback(ctx context.Context, tgID int64, username string, data string) (*UserResponse, error)
+	Broadcast(ctx context.Context, text string) (sent int, failed int)
 }
 
 func GetGiftID() string {
@@ -56,13 +63,14 @@ func GetGiftID() string {
 // userService is concrete implementation of UserService.
 // It is intentionally unexported - construct it via NewUserService.
 type userService struct {
-	repo        repository.UserRepository
-	logger      *slog.Logger
-	notifier    AdminNotifier
-	admins      map[int64]bool
-	giftFileID  string
-	ImageFileID string
-	sheets      *sheets.Client
+	repo         repository.UserRepository
+	logger       *slog.Logger
+	notifier     AdminNotifier
+	userNotifier UserNotifier
+	admins       map[int64]bool
+	giftFileID   string
+	ImageFileID  string
+	sheets       *sheets.Client
 }
 
 // UserResponse hold's bot reply to a single user interaction.
@@ -478,14 +486,15 @@ func (s *userService) validate(q *Question, answer string) error {
 }
 
 // NewUserService creates and returns a new instance of the UserService implementation.
-func NewUserService(repo repository.UserRepository, logger *slog.Logger, notifier AdminNotifier, cfg *config.Config, sheetsClient *sheets.Client) UserService {
+func NewUserService(repo repository.UserRepository, logger *slog.Logger, notifier AdminNotifier, userNotifier UserNotifier, cfg *config.Config, sheetsClient *sheets.Client) UserService {
 	return &userService{
-		repo:       repo,
-		logger:     logger,
-		notifier:   notifier,
-		admins:     cfg.AdminIDs,
-		giftFileID: cfg.GiftFileID,
-		sheets:     sheetsClient,
+		repo:         repo,
+		logger:       logger,
+		notifier:     notifier,
+		userNotifier: userNotifier,
+		admins:       cfg.AdminIDs,
+		giftFileID:   cfg.GiftFileID,
+		sheets:       sheetsClient,
 	}
 }
 
@@ -676,4 +685,28 @@ func BuildSheetConfigs() []sheets.SheetConfig {
 		})
 	}
 	return configs
+}
+
+// Broadcast sends text to every user in the database.
+// It returns the number of successfully delivered and failed messages.
+// Delivery errors per user are logged but do not abort the broadcast.
+//
+// NOTE: Runs synchronously - for large user bases consider running in a goroutine.
+func (s *userService) Broadcast(ctx context.Context, text string) (sent int, failed int) {
+	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
+	ids, err := s.repo.GetAllUserIDs(ctx)
+	if err != nil {
+		logger.Error("broadcast: failed to get user ids", "error", err)
+		return
+	}
+	for _, id := range ids {
+		if err := s.userNotifier.NotifyUser(id, text); err != nil {
+			logger.Error("broadcast: failed to send", "user_id", id, "error", err)
+			failed++
+		} else {
+			sent++
+		}
+	}
+	logger.Info("broadcast complete", "sent", sent, "failed", failed)
+	return
 }
