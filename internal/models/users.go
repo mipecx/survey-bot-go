@@ -1,9 +1,12 @@
+// Package models defines the domain types shared across the application layers.
 package models
 
 import (
 	"time"
 )
 
+// User represents a Telegram bot user and their current survey state.
+// Nullable fields use pointer types to distinguish between "not provided" and empty string.
 type User struct {
 	TGID        int64          `db:"tg_id"`
 	Username    string         `db:"username"`

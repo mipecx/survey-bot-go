@@ -1,3 +1,5 @@
+// Package sheets provides a Google Sheets client for appending survey results
+// and initialising the spreadsheet structure at application startup.
 package sheets
 
 import (
@@ -11,17 +13,25 @@ import (
 	"google.golang.org/api/sheets/v4"
 )
 
+// Client wraps the Google Sheets API service and provides high-level methods
+// for managing survey result sheets.
 type Client struct {
 	service       *sheets.Service
 	spreadsheetID string
 	logger        *slog.Logger
 }
 
+// SheetConfig describes a single worksheet: its display name and the ordered
+// list of column headers written to row 1 on first initialisation.
 type SheetConfig struct {
 	Name    string
 	Headers []string
 }
 
+// New creates an authenticated Google Sheets client using a Service Account
+// key file. The credentials file is read from disk and authenticated via OAuth2.
+// spreadsheetID is the ID from the Google Sheets URL:
+// https://docs.google.com/spreadsheets/d/<spreadsheetID>/edit
 func New(
 	ctx context.Context,
 	credentialsFile string,
@@ -59,6 +69,9 @@ func New(
 	}, nil
 }
 
+// AppendRow inserts a new row of values at the end of the named sheet.
+// values must be ordered to match the headers defined in SheetConfig.
+// Uses INSERT_ROWS mode - never overwrites existing data.
 func (c *Client) AppendRow(ctx context.Context, sheetName string, values []any) error {
 	row := &sheets.ValueRange{
 		Values: [][]any{values},
@@ -76,6 +89,12 @@ func (c *Client) AppendRow(ctx context.Context, sheetName string, values []any) 
 	return nil
 }
 
+// InitSheets ensures all configured worksheets exist and have headers in row 1.
+// Called once at application startup. For each SheetConfig:
+//  1. Creates the worksheet if it does not already exist.
+//  2. Writes headers to A1 if the row is empty.
+//
+// Existing data is never modified or deleted.
 func (c *Client) InitSheets(ctx context.Context, configs []SheetConfig) error {
 	logger := ctxlog.LoggerFromCtx(ctx, c.logger)
 

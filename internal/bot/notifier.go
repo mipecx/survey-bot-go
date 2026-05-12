@@ -6,16 +6,25 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// TelegramNotifier delivers admin notifications via the Telegram Bot API.
+// It implements the service.AdminNotifier interface.
+// All configured admins receive every notification independently -
+// a delivery failure for one admin does not prevent delivery to others.
 type TelegramNotifier struct {
 	bot    *tgbotapi.BotAPI
 	admins map[int64]bool
 	logger *slog.Logger
 }
 
+// NewTelegramNotifier creates a TelegramNotifier that broadcasts to all adminIDs.
 func NewTelegramNotifier(bot *tgbotapi.BotAPI, admins map[int64]bool, logger *slog.Logger) *TelegramNotifier {
 	return &TelegramNotifier{bot: bot, admins: admins, logger: logger}
 }
 
+// Notify sends an HTML-formatted message to every configured admin.
+// If the admin list is empty the call is a no-op.
+// Errors per admin are logged but do not abort delivery to remaining admins.
+// Always returns nil - per-admin errors are handled internally.
 func (n *TelegramNotifier) Notify(text string) error {
 	if len(n.admins) == 0 {
 		n.logger.Warn("Notifier: admin list is empty, no one to notify")

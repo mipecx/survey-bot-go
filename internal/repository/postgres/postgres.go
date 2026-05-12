@@ -1,3 +1,5 @@
+// Package postgres implements the repository.UserRepository interface
+// using a PostgreSQL database via the pgx/v5 connection pool.
 package postgres
 
 import (
@@ -13,15 +15,19 @@ import (
 	"github.com/mipecx/survey-bot-go/internal/models"
 )
 
+// ErrInvalidValueType is returned by SaveAnswer when the value argument
+// is not a string. All survey answers are expected to be string-typed.
 var ErrInvalidValueType = errors.New("invalid value type in survey data")
 
-// Storage wraps a pgxpool connection pool and implements userRepository.
+// Storage wraps a pgxpool connection pool and implements repository.UserRepository.
+// The logger field is used as a fallback when no per-request logger is in context.
 type Storage struct {
 	Pool   *pgxpool.Pool
 	logger *slog.Logger
 }
 
 // Close gracefully closes the underlying connection pool.
+// Safe to call on a nil Pool.
 func (r *Storage) Close() error {
 	if r.Pool != nil {
 		r.Pool.Close()
@@ -29,8 +35,9 @@ func (r *Storage) Close() error {
 	return nil
 }
 
-// New creates a new PostgreSQL connection pool and verifies connectivity via ping.
-// Returns an error if the pool can not be created or database in unreachable.
+// New creates a new pgxpool connection pool, verifies connectivity via Ping,
+// and returns a ready-to-use Storage. The provided logger is used for
+// startup errors and as a fallback in methods where no context logger is set.
 func New(ctx context.Context, connString string, logger *slog.Logger) (*Storage, error) {
 	pool, err := pgxpool.New(ctx, connString)
 	if err != nil {
@@ -48,8 +55,9 @@ func New(ctx context.Context, connString string, logger *slog.Logger) (*Storage,
 	return &Storage{Pool: pool, logger: logger}, nil
 }
 
-// GetOrCreateUser inserts a new user or updates the username on conflict,
-// returning the current user record.
+// GetOrCreateUser upserts the user record for tgID.
+// On conflict, username is updated only if the new value is non-empty.
+// Returns the full current user record including profile and survey state fields.
 func (s *Storage) GetOrCreateUser(ctx context.Context, tgID int64, username string) (*models.User, error) {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	var user models.User
@@ -160,8 +168,9 @@ func (s *Storage) ResetUserProgress(ctx context.Context, tgID int64, form string
 }
 
 // SaveAnswer persist a single survey answer for the given user.
-// Structured fields (full_name, phone, birth_date) are saved to dedicated columns;
+// Structured fields (full_name, phone, birth_date, city, gender) are saved to dedicated columns;
 // all other answers are merged into the survey_data JSONB column.
+// Returns ErrInvalidValueType if value is not a string.
 func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value any) error {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	var query string
@@ -215,6 +224,9 @@ func (s *Storage) SaveAnswer(ctx context.Context, tgID int64, key string, value 
 	return nil
 }
 
+// GetAnswersByForm returns all survey answers for the user as a flat string map.
+// Profile columns (full_name, phone, birth_date, city, gender) are merged with
+// the survey_data JSONB field. Keys match the question IDs used in AllForms.
 func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]string, error) {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	var (
@@ -263,6 +275,8 @@ func (s *Storage) GetAnswersByForm(ctx context.Context, tgID int64) (map[string]
 	return answers, nil
 }
 
+// SetPendingForm stores the form the user wanted to access before being
+// redirected to contact data collection.
 func (s *Storage) SetPendingForm(ctx context.Context, tgID int64, form string) error {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	_, err := s.Pool.Exec(ctx, `UPDATE users SET pending_form = $1 WHERE tg_id = $2`, form, tgID)
@@ -272,6 +286,7 @@ func (s *Storage) SetPendingForm(ctx context.Context, tgID int64, form string) e
 	return err
 }
 
+// ClearPendingForm removes the pending form redirect after it has been consumed.
 func (s *Storage) ClearPendingForm(ctx context.Context, tgID int64) error {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	_, err := s.Pool.Exec(ctx, `UPDATE users SET pending_form = NULL WHERE tg_id = $1`, tgID)

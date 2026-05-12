@@ -1,3 +1,4 @@
+// Package ctxlog provides a per-request structured logger stored in context.Context.
 package ctxlog
 
 import (
@@ -5,6 +6,8 @@ import (
 	"log/slog"
 )
 
+// contextKey is an unexported type for context keys in this package,
+// preventing collisions with keys from other packages.
 type contextKey string
 
 const (
@@ -13,7 +16,8 @@ const (
 	CtxKeyLogger    contextKey = "logger"
 )
 
-// LoggerFromCtx taking logger from the context
+// LoggerFromCtx retrieves the per-request logger stored in ctx.
+// If no logger is found (e.g. in background goroutines), fallback is returned.
 func LoggerFromCtx(ctx context.Context, fallback *slog.Logger) *slog.Logger {
 	if l, ok := ctx.Value(CtxKeyLogger).(*slog.Logger); ok {
 		return l

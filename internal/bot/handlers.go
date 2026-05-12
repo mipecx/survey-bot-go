@@ -1,3 +1,7 @@
+// Package bot implements the Telegram update handler layer.
+// It receives updates from the Telegram Bot API, enriches each request
+// with a per-update context (request_id, user_id, logger), and delegates
+// business logic to the service layer.
 package bot
 
 import (
@@ -13,8 +17,11 @@ import (
 	"github.com/mipecx/survey-bot-go/internal/service"
 )
 
-// Hander processes incoming Telegram updates and delegates business logic to Service.
-// userLocks ensures that concurrent updates from the same user are processed sequentially.
+// Handler processes incoming Telegram updates and delegates business logic to Service.
+// Concurrent updates from the same user are serialised via userLocks to prevent
+// race conditions on shared survey state.
+// lastBotMsg tracks the most recently sent bot message ID per chat,
+// used for in-place message editing.
 type Handler struct {
 	Bot            *tgbotapi.BotAPI
 	Admins         map[int64]bool
@@ -27,6 +34,8 @@ type Handler struct {
 	WelcomeImageID string
 }
 
+// extractTGID returns the Telegram user ID from any supported update type.
+// Returns 0 for unsupported update types.
 func (h *Handler) extractTGID(update tgbotapi.Update) int64 {
 	if update.Message != nil {
 		return update.Message.From.ID
@@ -37,14 +46,17 @@ func (h *Handler) extractTGID(update tgbotapi.Update) int64 {
 	return 0
 }
 
-// HandleUpdate routes the update to be handled in callback or message handler
+// HandleUpdate is the top-level entry point for all incoming Telegram updates.
+// It creates a per-request context with a unique request_id and structured logger,
+// acquires a per-user mutex to serialise concurrent updates, then routes to
+// handleCallback or handleMessage.
 func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 	tgID := h.extractTGID(update)
 
 	requestID := fmt.Sprintf("%d-%d", tgID, time.Now().UnixNano())
 	ctx := context.WithValue(context.Background(), ctxlog.CtxKeyRequestID, requestID)
 	ctx = context.WithValue(ctx, ctxlog.CtxKeyUserID, tgID)
-	logger := h.Logger.With("request_id", requestID)
+	logger := h.Logger.With("request_id", requestID, "user_id", tgID)
 	ctx = context.WithValue(ctx, ctxlog.CtxKeyLogger, logger)
 
 	lock, _ := h.userLocks.LoadOrStore(tgID, &sync.Mutex{})
@@ -61,6 +73,9 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 	}
 }
 
+// handleMessage processes text messages, commands, and contact shares.
+// For text input during an active survey step, it deletes the user's message
+// when the bot needs to edit its previous message in place (validation errors).
 func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
 	var resp *service.UserResponse
@@ -108,6 +123,10 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	h.sendResponse(ctx, chatID, resp)
 }
 
+// handleCallback processes inline keyboard button taps.
+// It answers the callback query immediately to remove the loading indicator,
+// then delegates to the service layer and attempts an in-place edit of the
+// originating message.
 func (h *Handler) handleCallback(ctx context.Context, callback *tgbotapi.CallbackQuery) {
 	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
 
@@ -135,7 +154,10 @@ func (h *Handler) handleCallback(ctx context.Context, callback *tgbotapi.Callbac
 	h.sendResponse(ctx, chatID, resp)
 }
 
-// sendResponse sends a text message to the given chat, with an inline keyboard if buttons are provided.
+// handleCallback processes inline keyboard button taps.
+// It answers the callback query immediately to remove the loading indicator,
+// then delegates to the service layer and attempts an in-place edit of the
+// originating message.
 func (h *Handler) sendResponse(ctx context.Context, chatID int64, resp *service.UserResponse) {
 	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
 
@@ -169,8 +191,13 @@ func (h *Handler) sendResponse(ctx context.Context, chatID int64, resp *service.
 	}
 }
 
-// trySendEdit пытается отредактировать существующее сообщение.
-// Возвращает true, если редактирование прошло успешно (документ всё равно нужно отправить).
+// trySendEdit attempts to edit an existing bot message in place.
+// Returns false (and falls back to trySendMessage) when:
+//   - resp.Edit is false or MessageID is zero;
+//   - the step requires a reply keyboard (InputPhone);
+//   - Telegram rejects the edit (e.g. message too old, or not a bot message).
+//
+// On rejection the original message is deleted so trySendMessage can send a fresh one.
 func (h *Handler) trySendEdit(ctx context.Context, chatID int64, resp *service.UserResponse) bool {
 	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
 
@@ -202,6 +229,10 @@ func (h *Handler) trySendEdit(ctx context.Context, chatID int64, resp *service.U
 	return true
 }
 
+// trySendMessage sends a new message to the chat.
+// If resp.Edit is true but editing failed, it first deletes the stale bot message.
+// Keyboard type is selected based on resp.InputType and resp.Buttons.
+// The sent message ID is stored in lastBotMsg for future edit attempts.
 func (h *Handler) trySendMessage(ctx context.Context, chatID int64, resp *service.UserResponse) {
 	logger := ctxlog.LoggerFromCtx(ctx, h.Logger)
 

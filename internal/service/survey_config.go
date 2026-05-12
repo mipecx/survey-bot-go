@@ -1,15 +1,23 @@
+// Package service implements the core business logic of the survey bot.
+// survey_config.go defines all survey forms, button labels, and form metadata
+// used throughout the service layer.
 package service
 
+// InputType classifies how a survey question expects the user to respond.
 type InputType int
 
 const (
+	// InputText expects a free form text message from a user.
 	InputText InputType = iota
+	// InputChoice expects user to tap one of the inline keyboard.
 	InputChoice
+	// InputPhone expetcs a phone number, either typed or shared via cantact button.
 	InputPhone
 )
 
 // Question represents a single step in a survey form.
-// Options, if non-empty, are presented to the user as inline keyboard buttons.
+// Options, if non-empty, are presented as inline keyboard buttons.
+// InfoOnly marks informational screens that should not be saved or reported to admins.
 // NextForm is reserved for future branching logic between forms.
 type Question struct {
 	ID       string
@@ -20,7 +28,9 @@ type Question struct {
 	InfoOnly bool
 }
 
-// Main menu button labels used accross all keyboard responses.
+// Button label constants used across all keyboard responses.
+//
+// NOTE: All values must be under 64 bytes (Telegram callback_data limit).
 const (
 	BtnEvent      = "Закрытые вечера Архитектуры любви"
 	BtnPartner    = "Индивидуальный подбор партнёра"
@@ -29,11 +39,13 @@ const (
 	BtnConsult    = "Консультация с Натальей"
 	BtnCommunity  = "Пространство наполненной женщины"
 	BtnToMainMenu = "Вернуться в главное меню"
-	BtnProgram    = "«Путь к своему мужчине»"
+	BtnProgram    = "Программа «Путь к своему мужчине»"
 	BtnWebinar    = "Регистрация на вебинар 14 мая"
 )
 
-// FormAutoFields — fields that automatically pulled from user's profile
+// FormAutoFields maps form IDs to profile fields that are automatically
+// saved to survey_data at form start, without asking the user again.
+// Keys are question IDs, values are profile field names (age, city, gender).
 var FormAutoFields = map[string]map[string]string{
 	"event": {
 		"event_age":    "age",
@@ -47,6 +59,7 @@ var FormAutoFields = map[string]map[string]string{
 	},
 }
 
+// MainMenuButtons defines the ordered list of buttons shown in the main menu.
 var (
 	MainMenuButtons = []string{
 		BtnWebinar,
@@ -60,14 +73,11 @@ var (
 	}
 )
 
+// WelcomeText is shown to new users before the first registration question.
 const WelcomeText = `Добро пожаловать в Архитектуру любви 🤍
-
 Это закрытое пространство для тех, кому близки зрелые отношения, достойное окружение и красивый уровень общения.
-
-Здесь не про случайные знакомства — здесь про осознанный выбор и создание счастливого союза.
-
+Здесь не про случайные знакомства - здесь про осознанный выбор и создание счастливого союза.
 Чтобы подобрать для вас подходящий путь, ответьте на несколько коротких вопросов.
-
 `
 
 // AllForms is the registry of all available survey forms, keyed by form name.
@@ -84,20 +94,23 @@ var AllForms = map[string][]Question{
 	"webinar":          WebinarForm,
 }
 
+// FormEndings maps form IDs to their completion messages shown to user.
 var FormEndings = map[string]string{
 	"new_user":         "<b>Приятно познакомиться.</b> 🤍\n\nВам открыт доступ к пространству. Выберите направление, которое сейчас наиболее актуально.",
 	"event":            "<b>Заявка принята.</b> 🥂\n\nНаталья лично рассматривает каждое обращение, чтобы сохранить качество окружения. Мы напишем вам, когда появится подходящее событие.",
-	"dating_short":     "<b>Благодарим за ответы.</b> 🤍\n\nЭто поможет нам лучше понять ваш запрос. Если вы готовы к более глубокому разбору — рекомендуем заполнить полную анкету.",
+	"dating_short":     "<b>Благодарим за ответы.</b> 🤍\n\nЭто поможет нам лучше понять ваш запрос. Если вы готовы к более глубокому разбору - рекомендуем заполнить полную анкету.",
 	"dating_full":      "<b>Анкета получена.</b> 🙏\n\nНаталья изучит ваши ценности и видение союза. Мы свяжемся с вами в ближайшее время.",
 	"portrait":         "<b>Запрос на портрет партнёра принят.</b> 🕯\n\nНаталья подготовит основу для вашей сессии, чтобы сделать её максимально точной и глубокой. Ожидайте сообщения.",
 	"consult":          "<b>Заявка на личную работу отправлена.</b> ✉️\n\nБлагодарим за доверие. Мы свяжемся с вами, чтобы согласовать удобное время.",
 	"contact":          "Спасибо! Теперь вы можете пользоваться всеми возможностями пространства.",
 	"authors_programm": "<b>Заявка на программу принята.</b> 🤍\n\nНаталья свяжется с вами в ближайшее время.",
-	"webinar":          "Мы приняли вышу заявку и свяжемся с вами в ближайшее время!🤍",
+	"webinar":          "Мы приняли вашу заявку и свяжемся с вами в ближайшее время!🤍",
 }
 
+// WebinarForm is an informational screen for the open webinar.
+// InfoOnly=true - the user's button tap triggers a lead notification only.
 var WebinarForm = []Question{
-	{ID: "webinar info",
+	{ID: "webinar_info",
 		Text: "❤️ <b>Открытая встреча</b>\n" +
 			"«Как выбрать своего среди достойных мужчин»\n\n" +
 			"14 мая проведу встречу для женщин, которые хотят знакомиться не вслепую, а понимать, как выбирать мужчин своего уровня.\n\n" +
@@ -116,6 +129,8 @@ var WebinarForm = []Question{
 	},
 }
 
+// AuthorsProgramm is an informational screen for the 60-day author's programme.
+// InfoOnly=true - the user's button tap triggers a lead notification only.
 var AuthorsProgramm = []Question{
 	{
 		ID: "program_info",
@@ -145,10 +160,13 @@ var AuthorsProgramm = []Question{
 }
 
 // NewUserForm is the initial registration form shown to every new user.
+// Collects only the user's name; contact details are gathered via ContactForm.
 var NewUserForm = []Question{
 	{ID: "reg_name", Text: "Как к вам можно обращаться?", Type: InputText},
 }
 
+// ContactForm collects essential contact and demographic data before
+// the user accesses any other feature for the first time.
 var ContactForm = []Question{
 	{ID: "reg_phone", Text: "Оставьте ваш контактный номер", Type: InputPhone},
 	{ID: "reg_birthdate", Text: "Укажите вашу дату рождения (ДД.ММ.ГГГГ)", Type: InputText},

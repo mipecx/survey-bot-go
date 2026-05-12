@@ -42,7 +42,7 @@ func Run(ctx context.Context, botAPI *tgbotapi.BotAPI, repo repository.UserRepos
 		Logger:         logger,
 		WG:             &wg,
 		CommunityURL:   cfg.CommunityURL,
-		WelcomeImageID: cfg.WeclomeImageID,
+		WelcomeImageID: cfg.WelcomeImageID,
 	}
 
 	u := tgbotapi.NewUpdate(0)

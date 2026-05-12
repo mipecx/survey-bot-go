@@ -40,6 +40,8 @@ services:
         condition: service_completed_successfully
     env_file:
       - .env
+    volumes:
+      - ./credentials.json:/app/credentials.json:ro
 
 volumes:
   postgres_data:

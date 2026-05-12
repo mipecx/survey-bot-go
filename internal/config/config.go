@@ -1,3 +1,5 @@
+// Package config loads and validates application configuration from
+// environment variables and an optional .env file.
 package config
 
 import (
@@ -9,18 +11,23 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Config holds all runtime configuration for the survey bot.
+// Critical fields (BotToken, DatabaseURL) cause the process to exit if absent.
 type Config struct {
 	BotToken          string
 	DatabaseURL       string
 	AdminIDs          map[int64]bool
 	CommunityURL      string
 	GiftFileID        string
-	WeclomeImageID    string
+	WelcomeImageID    string
 	LogLevel          slog.Level
 	GoogleSheetsID    string
 	GoogleCredentials string
 }
 
+// MustLoad reads configuration from environment variables, optionally loading
+// a .env file first. It exits the process if BotToken or DatabaseURL are missing.
+// ADMIN_IDS is parsed as a comma-separated list of int64 Telegram user IDs.
 func MustLoad() *Config {
 	if err := godotenv.Load(); err != nil {
 		slog.Warn(".env file not found, using system variables")
@@ -33,7 +40,7 @@ func MustLoad() *Config {
 		GiftFileID:        os.Getenv("GIFT_FILE_ID"),
 		LogLevel:          parseLogLevel(os.Getenv("LOG_LEVEL")),
 		AdminIDs:          make(map[int64]bool),
-		WeclomeImageID:    os.Getenv("WELCOME_IMAGE_ID"),
+		WelcomeImageID:    os.Getenv("WELCOME_IMAGE_ID"),
 		GoogleSheetsID:    os.Getenv("GOOGLE_SHEETS_ID"),
 		GoogleCredentials: getEnv("GOOGLE_CREDENTIALS_FILE", "credentials.json"),
 	}
@@ -60,6 +67,8 @@ func MustLoad() *Config {
 	return cfg
 }
 
+// getEnv returns the value of the environment variable key,
+// or defaultValue if the variable is not set.
 func getEnv(key, defaultValue string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
@@ -67,6 +76,8 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+// parseLogLevel converts a log level string to the corresponding slog.Level.
+// Unrecognised values default to slog.LevelInfo.
 func parseLogLevel(level string) slog.Level {
 	switch strings.ToLower(level) {
 	case "debug":

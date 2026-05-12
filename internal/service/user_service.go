@@ -1,3 +1,6 @@
+// Package service implements the core business logic of the survey bot.
+// It orchestrates user registration, survey flow, answer validation,
+// admin notifications, and Google Sheets integration.
 package service
 
 import (
@@ -30,6 +33,8 @@ var (
 
 const FormNewUser = "new_user"
 
+// AdminNotifier is implemented by any type that can deliver
+// a formatted notification to administrator.
 type AdminNotifier interface {
 	Notify(text string) error
 }
@@ -48,6 +53,8 @@ func GetGiftID() string {
 	return url
 }
 
+// userService is concrete implementation of UserService.
+// It is intentionally unexported - construct it via NewUserService.
 type userService struct {
 	repo        repository.UserRepository
 	logger      *slog.Logger
@@ -58,7 +65,9 @@ type userService struct {
 	sheets      *sheets.Client
 }
 
-// UserResponse holds the bot's reply text and optional inline keyboard buttons.
+// UserResponse hold's bot reply to a single user interaction.
+// Edit=true instructs the handler to edit the previous bot messagein place
+// rather than sending a new one.
 type UserResponse struct {
 	Text             string
 	Buttons          []string
@@ -231,7 +240,7 @@ func (s *userService) startForm(ctx context.Context, tgID int64, formName string
 }
 
 // handleStartCommand resets user into the new_user registration form.
-// Prepends WeclomeText for users who have not yet provided their name.
+// Prepends WelcomeText for users who have not yet provided their name.
 func (s *userService) handleStartCommand(ctx context.Context, tgID int64, user *models.User) (*UserResponse, error) {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	logger.Info("Start command received")
@@ -294,8 +303,6 @@ func (s *userService) handleSurveyStep(ctx context.Context, tgID int64, user *mo
 		}
 		return s.handleStartCommand(ctx, tgID, user)
 	}
-
-	logger.Info("compare", "text_bytes", []byte(text), "btn_bytes", []byte(BtnToMainMenu), "equal", text == BtnToMainMenu)
 
 	questions, ok := AllForms[user.CurrentForm]
 	if !ok || len(questions) == 0 {
@@ -482,6 +489,9 @@ func NewUserService(repo repository.UserRepository, logger *slog.Logger, notifie
 	}
 }
 
+// notifyAdmin sends a formatted HTML summary of a completed survey to all admins
+// and appends a row to the corresponding Google Sheet.
+// It runs in a separate goroutine and uses its own timeout context.
 func (s *userService) notifyAdmin(ctx context.Context, tgID int64, formID string) {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -559,10 +569,15 @@ func (s *userService) notifyAdmin(ctx context.Context, tgID int64, formID string
 	}
 }
 
+// isContactComplete reports whether the user rovided all required
+// contact details (phone, birth date, city, gender).
 func (s *userService) isContactComplete(user *models.User) bool {
 	return user.Phone != nil && *user.Phone != "" && user.BirthDate != nil && user.City != nil && user.Gender != nil
 }
 
+// startFormOrCollectContact starts targetForm if the user's contact profile
+// is complete. Otherwise it saves targetForm as pending and redirects
+// the user to he contact collection flow first.
 func (s *userService) startFormOrCollectContact(ctx context.Context, tgID int64, user *models.User, targetForm string) (*UserResponse, error) {
 	if s.isContactComplete(user) {
 		return s.startForm(ctx, tgID, targetForm, true)
@@ -574,6 +589,9 @@ func (s *userService) startFormOrCollectContact(ctx context.Context, tgID int64,
 	return s.startForm(ctx, tgID, "contact", true)
 }
 
+// resloveOptions maps a zero-based button index back to the original option text.
+// Used to convert compact callback_data (stepID:index) into human readable answer.
+// Falls back to the raw index string if the form or index is not found.
 func resolveOption(formName, stepID string, idx int, fallback string) string {
 	questions, ok := AllForms[formName]
 	if !ok {
@@ -595,6 +613,7 @@ func lastQuestionType(formName string) InputType {
 	return questions[len(questions)-1].Type
 }
 
+// formSheetName maps a form ID to its display name in Google Sheets
 func formSheetName(formID string) string {
 	names := map[string]string{
 		"new_user":         "Регистрация",
@@ -613,6 +632,8 @@ func formSheetName(formID string) string {
 	return formID
 }
 
+// buildSheetRow assembles a flat ro of values for Google Sheets from
+// user profile fields and survey answers in the order defined by AllForms.
 func buildSheetRow(formID string, tgID int64, fullName, username, age, city, gender string, answers map[string]string) []any {
 	row := []any{
 		time.Now().Format("02.01.2006 15:04"),
@@ -634,6 +655,9 @@ func buildSheetRow(formID string, tgID int64, fullName, username, age, city, gen
 	return row
 }
 
+// BuildSheetConfigs generates a SheetsConfig entries for all registered forms,
+// using base profile headers followed by each non-inforamtional question text.
+// Called once at startup to initialise the Google Sheets structure.
 func BuildSheetConfigs() []sheets.SheetConfig {
 	baseHeaders := []string{"Дата", "Имя", "Username", "ID", "Возраст", "Город", "Пол"}
 
