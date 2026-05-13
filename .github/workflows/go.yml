@@ -29,5 +29,6 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             cd ~/infra/bots/survey-bot-go
+            git reset --hard
             git pull origin main
             docker compose up -d --build bot

@@ -3,12 +3,11 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-
 RUN go build -o bot ./cmd/bot/main.go
 
 FROM alpine:latest
-WORKDIR /root/
-
+WORKDIR /app
 COPY --from=builder /app/bot .
+COPY --from=builder /app/migrations ./migrations
 
 CMD ["./bot"]
