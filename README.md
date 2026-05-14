@@ -1,5 +1,5 @@
 # survey-bot-go
-![Go CI](https://github.com/USER/REPO/actions/workflows/go.yml/badge.svg)
+![Go CI](https://github.com/mipecx/survey-bot-go/actions/workflows/go.yml/badge.svg)
 
 A production-ready Telegram bot for structured client surveys and automated lead collection. Built for the **Архитектура любви** matchmaking project.
 
