@@ -86,6 +86,20 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	chatID := msg.Chat.ID
 
 	switch {
+	case msg.Photo != nil:
+		if !h.Admins[userID] {
+			return
+		}
+		caption := msg.Caption
+		if !strings.HasPrefix(caption, "/broadcast ") {
+			return
+		}
+		text := strings.TrimPrefix(caption, "/broadcast ")
+		photoFileID := msg.Photo[len(msg.Photo)-1].FileID
+		sent, failed := h.Service.Broadcast(ctx, text, photoFileID)
+		h.Bot.Send(tgbotapi.NewMessage(chatID,
+			fmt.Sprintf("✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed)))
+		return
 	case msg.Contact != nil:
 		resp, err = h.Service.ProcessMessage(ctx, userID, username, msg.Contact.PhoneNumber)
 		if err != nil {
@@ -110,10 +124,10 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			}
 			text := msg.CommandArguments()
 			if text == "" {
-				h.Bot.Send(tgbotapi.NewMessage(chatID, "Использование: /broadcast <текст>"))
+				h.Bot.Send(tgbotapi.NewMessage(chatID, "Использование:\n/broadcast текст\nИли отправьте фото с подписью /broadcast текст"))
 				return
 			}
-			sent, failed := h.Service.Broadcast(ctx, text)
+			sent, failed := h.Service.Broadcast(ctx, text, "")
 			h.Bot.Send(tgbotapi.NewMessage(chatID,
 				fmt.Sprintf("✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed)))
 			return

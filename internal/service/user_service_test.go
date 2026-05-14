@@ -40,7 +40,7 @@ type userNotifierStub struct {
 	calls          []int64
 }
 
-func (n *userNotifierStub) NotifyUser(tgID int64, _ string) error {
+func (n *userNotifierStub) NotifyUser(tgID int64, _ string, _ string) error {
 	n.calls = append(n.calls, tgID)
 	if err, ok := n.errorsByUserID[tgID]; ok {
 		return err
@@ -104,7 +104,7 @@ func TestUserServiceBroadcast(t *testing.T) {
 				logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
 
-			sent, failed := svc.Broadcast(context.Background(), "test broadcast")
+			sent, failed := svc.Broadcast(context.Background(), "test broadcast", "test id")
 
 			if sent != tt.want.sent {
 				t.Fatalf("sent mismatch: got %d, want %d", sent, tt.want.sent)

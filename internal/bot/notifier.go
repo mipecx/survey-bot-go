@@ -52,7 +52,14 @@ func (n *TelegramNotifier) Notify(text string) error {
 
 // NotifyUser sends an HTML-formatted message to a single Telegram user.
 // Unlike Notify, this targets an arbitrary user ID rather than the admin list.
-func (n *TelegramNotifier) NotifyUser(tgID int64, text string) error {
+func (n *TelegramNotifier) NotifyUser(tgID int64, text string, photoFileID string) error {
+	if photoFileID != "" {
+		photo := tgbotapi.NewPhoto(tgID, tgbotapi.FileID(photoFileID))
+		photo.Caption = text
+		photo.ParseMode = "HTML"
+		_, err := n.bot.Send(photo)
+		return err
+	}
 	msg := tgbotapi.NewMessage(tgID, text)
 	msg.ParseMode = "HTML"
 	_, err := n.bot.Send(msg)

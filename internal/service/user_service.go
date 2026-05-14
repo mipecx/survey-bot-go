@@ -42,14 +42,14 @@ type AdminNotifier interface {
 // UserNotifier is implemented by any type that can deliver
 // a message to a specific Telegram user.
 type UserNotifier interface {
-	NotifyUser(tgID int64, text string) error
+	NotifyUser(tgID int64, text string, photoFileID string) error
 }
 
 // UserService defines the contract for processing incoming Telegram updates.
 type UserService interface {
 	ProcessMessage(ctx context.Context, tgID int64, username string, text string) (*UserResponse, error)
 	ProcessCallback(ctx context.Context, tgID int64, username string, data string) (*UserResponse, error)
-	Broadcast(ctx context.Context, text string) (sent int, failed int)
+	Broadcast(ctx context.Context, text string, photoFileID string) (sent int, failed int)
 }
 
 func GetGiftID() string {
@@ -692,7 +692,7 @@ func BuildSheetConfigs() []sheets.SheetConfig {
 // Delivery errors per user are logged but do not abort the broadcast.
 //
 // NOTE: Runs synchronously - for large user bases consider running in a goroutine.
-func (s *userService) Broadcast(ctx context.Context, text string) (sent int, failed int) {
+func (s *userService) Broadcast(ctx context.Context, text string, photoFileID string) (sent int, failed int) {
 	logger := ctxlog.LoggerFromCtx(ctx, s.logger)
 	ids, err := s.repo.GetAllUserIDs(ctx)
 	if err != nil {
@@ -700,7 +700,7 @@ func (s *userService) Broadcast(ctx context.Context, text string) (sent int, fai
 		return
 	}
 	for _, id := range ids {
-		if err := s.userNotifier.NotifyUser(id, text); err != nil {
+		if err := s.userNotifier.NotifyUser(id, text, photoFileID); err != nil {
 			logger.Error("broadcast: failed to send", "user_id", id, "error", err)
 			failed++
 		} else {
