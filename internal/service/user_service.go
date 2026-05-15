@@ -151,8 +151,8 @@ func (s *userService) ProcessCallback(ctx context.Context, tgID int64, username 
 	*/
 	case BtnConsult:
 		return s.startFormOrCollectContact(ctx, tgID, user, "consult")
-	case BtnWebinar:
-		return s.startFormOrCollectContact(ctx, tgID, user, "webinar")
+	/* case BtnWebinar:
+	return s.startFormOrCollectContact(ctx, tgID, user, "webinar")*/
 	case BtnProgram:
 		return s.startFormOrCollectContact(ctx, tgID, user, "authors_programm")
 	case BtnToMainMenu:
@@ -633,7 +633,7 @@ func formSheetName(formID string) string {
 		"portrait":         "Портрет партнёра",
 		"consult":          "Консультация",
 		"authors_programm": "Программа",
-		"webinar":          "Вебинар 14 мая",
+		// "webinar":          "Вебинар 14 мая",
 	}
 	if name, ok := names[formID]; ok {
 		return name

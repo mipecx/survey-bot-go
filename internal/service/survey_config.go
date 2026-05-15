@@ -40,7 +40,7 @@ const (
 	BtnCommunity  = "Пространство наполненной женщины"
 	BtnToMainMenu = "Вернуться в главное меню"
 	BtnProgram    = "Программа «Путь к своему мужчине»"
-	BtnWebinar    = "Регистрация на вебинар 14 мая"
+	// BtnWebinar    = "Регистрация на вебинар 14 мая"
 )
 
 // FormAutoFields maps form IDs to profile fields that are automatically
@@ -62,7 +62,7 @@ var FormAutoFields = map[string]map[string]string{
 // MainMenuButtons defines the ordered list of buttons shown in the main menu.
 var (
 	MainMenuButtons = []string{
-		BtnWebinar,
+		// BtnWebinar,
 		BtnProgram,
 		BtnConsult,
 		BtnGodPartner,
@@ -91,7 +91,7 @@ var AllForms = map[string][]Question{
 	"dating_full":      DatingFullForm,
 	"portrait":         PortraitForm,
 	"consult":          ConsultForm,
-	"webinar":          WebinarForm,
+	// "webinar":          WebinarForm,
 }
 
 // FormEndings maps form IDs to their completion messages shown to user.
@@ -104,12 +104,12 @@ var FormEndings = map[string]string{
 	"consult":          "<b>Заявка на личную работу отправлена.</b> ✉️\n\nБлагодарим за доверие. Мы свяжемся с вами, чтобы согласовать удобное время.",
 	"contact":          "Спасибо! Теперь вы можете пользоваться всеми возможностями пространства.",
 	"authors_programm": "<b>Заявка на программу принята.</b> 🤍\n\nНаталья свяжется с вами в ближайшее время.",
-	"webinar":          "Мы приняли вашу заявку и свяжемся с вами в ближайшее время!🤍",
+	// "webinar":          "Мы приняли вашу заявку и свяжемся с вами в ближайшее время!🤍",
 }
 
 // WebinarForm is an informational screen for the open webinar.
 // InfoOnly=true - the user's button tap triggers a lead notification only.
-var WebinarForm = []Question{
+/* var WebinarForm = []Question{
 	{ID: "webinar_info",
 		Text: "❤️ <b>Открытая встреча</b>\n" +
 			"«Как выбрать своего среди достойных мужчин»\n\n" +
@@ -127,7 +127,7 @@ var WebinarForm = []Question{
 		Type:     InputChoice,
 		InfoOnly: true,
 	},
-}
+} */
 
 // AuthorsProgramm is an informational screen for the 60-day author's programme.
 // InfoOnly=true - the user's button tap triggers a lead notification only.
